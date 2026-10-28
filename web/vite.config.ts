@@ -21,7 +21,8 @@ export default defineConfig({
     react(),
     localTimeApi,
     VitePWA({
-      registerType: 'autoUpdate',
+      // prompt: 새 버전을 바로 적용하지 않고 updates.ts가 방송 상태를 보고 적용 시점을 정한다
+      registerType: 'prompt',
       manifest: {
         name: '수능 방송 스케줄러',
         short_name: 'CSAT Cast',

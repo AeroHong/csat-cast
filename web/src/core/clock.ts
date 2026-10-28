@@ -25,7 +25,8 @@ export function bestOffset(samples: TimeSample[]): { offset: number; rtt: number
 
 export const monotonicNow = (): number => performance.timeOrigin + performance.now();
 
-export type SyncSource = 'api' | 'http-date' | 'none';
+/** cached: 서버 연결 없이 마지막으로 저장한 보정값을 사용 중 (PC 시계를 바꾸지 않았다면 정확) */
+export type SyncSource = 'api' | 'http-date' | 'cached' | 'none';
 
 export interface ClockStatus {
   synced: boolean;
@@ -41,6 +42,16 @@ export interface ClockStatus {
 
 export const OS_DRIFT_WARN_MS = 30_000;
 export const OFFSET_JUMP_WARN_MS = 1_000;
+/** 벽시계가 단조 시계보다 이만큼 더 흘렀으면 PC가 절전/일시정지되었던 것으로 본다 */
+export const SUSPEND_DETECT_MS = 2_000;
+
+const CACHE_KEY = 'csat-cast:clock';
+
+/** 저장 형식: 서버시각 - PC시각. PC 시계를 바꾸지 않는 한 재시작 후에도 유효하다. */
+interface ClockCache {
+  serverMinusWall: number;
+  savedAt: number;
+}
 
 export class ServerClock {
   private offset = 0;
@@ -53,8 +64,40 @@ export class ServerClock {
     osClockDriftMs: 0,
   };
   private listeners = new Set<(s: ClockStatus) => void>();
+  private lastWall = Date.now();
+  private lastMono = monotonicNow();
 
-  constructor(private timeUrl = '/api/time') {}
+  constructor(private timeUrl = '/api/time') {
+    const cache = readCache();
+    if (cache) {
+      // 단조 시계 기준 offset으로 환산
+      this.offset = Date.now() + cache.serverMinusWall - monotonicNow();
+      this.status = { ...this.status, source: 'cached', offsetMs: Math.round(this.offset), lastSyncAt: cache.savedAt };
+    }
+  }
+
+  /** 서버 시각으로 믿고 쓸 수 있는 상태인가 (실시간 동기화 또는 저장된 보정값) */
+  get usable(): boolean {
+    return this.status.synced || this.status.source === 'cached';
+  }
+
+  /**
+   * PC 절전·일시정지 감지. 주기적으로 호출하면, 벽시계가 단조 시계보다 크게 앞서 나간 경우
+   * (일부 환경에서 절전 중 performance.now()가 멈춤) 그 차이(ms)를 반환하고 즉시 재동기화한다.
+   */
+  detectSuspend(): number {
+    const wall = Date.now();
+    const mono = monotonicNow();
+    const gap = wall - this.lastWall - (mono - this.lastMono);
+    this.lastWall = wall;
+    this.lastMono = mono;
+    if (Math.abs(gap) <= SUSPEND_DETECT_MS) return 0;
+    // 저장된 보정값으로 즉시 복구한 뒤 서버와 다시 맞춘다
+    const cache = readCache();
+    if (cache) this.offset = Date.now() + cache.serverMinusWall - monotonicNow();
+    void this.sync();
+    return gap;
+  }
 
   /** 서버 기준 현재 시각 (epoch ms) */
   now(): number {
@@ -81,7 +124,12 @@ export class ServerClock {
     }
     if (!result) {
       // 오프라인: 마지막 offset을 유지하고 상태만 갱신
-      this.status = { ...this.status, error: '시각 서버에 연결할 수 없습니다 (마지막 동기화 값 사용 중)' };
+      this.status = {
+        ...this.status,
+        error: this.usable
+          ? '시각 서버에 연결할 수 없습니다 (저장된 보정값 사용 중)'
+          : '시각 서버에 연결할 수 없습니다 (PC 시계 사용 중)',
+      };
       this.emit();
       return { jumpWarning: false };
     }
@@ -94,6 +142,7 @@ export class ServerClock {
       lastSyncAt: this.now(),
       osClockDriftMs: 0,
     };
+    writeCache({ serverMinusWall: this.now() - Date.now(), savedAt: this.now() });
     this.emit();
     return { jumpWarning: prev !== null && Math.abs(prev - result.offset) > OFFSET_JUMP_WARN_MS };
   }
@@ -126,6 +175,24 @@ export class ServerClock {
   private emit() {
     const s = this.getStatus();
     for (const fn of this.listeners) fn(s);
+  }
+}
+
+function readCache(): ClockCache | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    const c = raw ? (JSON.parse(raw) as ClockCache) : null;
+    return c && Number.isFinite(c.serverMinusWall) ? c : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(c: ClockCache) {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(c));
+  } catch {
+    /* 저장소 사용 불가 */
   }
 }
 

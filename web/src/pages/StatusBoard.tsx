@@ -1,6 +1,6 @@
 import { collection, getDocs } from 'firebase/firestore';
 import { onValue, ref } from 'firebase/database';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { serverClock } from '../core/clock';
 import { fb } from '../core/firebase';
 import type { ChannelStatus } from '../core/reporter';
@@ -21,11 +21,15 @@ export function judge(s: ChannelStatus | undefined, now: number): { health: Heal
   if (!s.online || now - s.lastSeen > STALE_MS) {
     bad.push(s.armed ? '연결 끊김 (PC에서 재생은 계속될 수 있음)' : '연결 끊김');
   }
+  for (const a of s.alarms ?? []) bad.push(a);
+  if (s.armed && !s.audioUnlocked && !(s.alarms ?? []).length) bad.push('소리 출력 꺼짐');
   if (s.failedCount > 0) bad.push(`재생 실패 ${s.failedCount}건`);
   if (s.armed && s.nextCue && now > s.nextCue.at + LATE_REPORT_MS) bad.push(`'${s.nextCue.label}' 송출 보고 지연`);
   if (!s.cacheReady) warn.push(s.missingAssets ? `음원 ${s.missingAssets}개 누락` : '음원 준비 중');
   if (!s.clockSynced) warn.push('시각 미동기화');
-  if (!s.audioUnlocked) warn.push('오디오 꺼짐');
+  if (!s.armed && !s.audioUnlocked) warn.push('소리 출력 꺼짐');
+  if (!s.soundConfirmed) warn.push('스피커 확인 안 함');
+  if (!s.autoplayAllowed) warn.push('전용 실행 아이콘 미사용 (새로고침 시 클릭 필요)');
   if (!s.armed) warn.push('자동 방송 대기 아님');
   if (s.skippedCount > 0) warn.push(`건너뜀 ${s.skippedCount}건`);
   if (bad.length) return { health: 'bad', reasons: [...bad, ...warn] };
@@ -39,6 +43,8 @@ export default function StatusBoard() {
   const [schools, setSchools] = useState<SchoolProfile[]>([]);
   const [now, setNow] = useState(serverClock.now());
   const [onlyProblems, setOnlyProblems] = useState(false);
+  const [alertSound, setAlertSound] = useState(false);
+  const prevBad = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!fb) return;
@@ -53,6 +59,19 @@ export default function StatusBoard() {
       clearInterval(id);
     };
   }, []);
+
+  // 새로 '문제'가 생긴 시험장이 있으면 경고음 + 탭 제목에 표시 (다른 창을 보고 있어도 알 수 있게)
+  useEffect(() => {
+    const badNow = new Set(
+      Object.entries(status).flatMap(([code, chans]) =>
+        Object.entries(chans).filter(([, s]) => judge(s, now).health === 'bad').map(([ch]) => `${code}/${ch}`),
+      ),
+    );
+    const newlyBad = [...badNow].some((k) => !prevBad.current.has(k));
+    prevBad.current = badNow;
+    document.title = badNow.size ? `(${badNow.size}) 문제 — 방송 상태판` : '방송 상태판';
+    if (newlyBad && alertSound) beep();
+  }, [status, now, alertSound]);
 
   if (!fb) return <div className="center">상태판은 서버 연결이 필요합니다.</div>;
 
@@ -96,6 +115,17 @@ export default function StatusBoard() {
         <div className="sum bad">문제 {count('bad')}</div>
         <div className="sum none">미접속 {count('none')}</div>
         <label className="row">
+          <input
+            type="checkbox"
+            checked={alertSound}
+            onChange={(e) => {
+              setAlertSound(e.target.checked);
+              if (e.target.checked) beep();
+            }}
+          />
+          문제 발생 시 경고음
+        </label>
+        <label className="row">
           <input type="checkbox" checked={onlyProblems} onChange={(e) => setOnlyProblems(e.target.checked)} />
           문제 있는 곳만
         </label>
@@ -136,6 +166,22 @@ export default function StatusBoard() {
       </div>
     </div>
   );
+}
+
+let alertCtx: AudioContext | null = null;
+function beep() {
+  alertCtx ??= new AudioContext();
+  const t = alertCtx.currentTime;
+  for (let i = 0; i < 3; i++) {
+    const osc = alertCtx.createOscillator();
+    const g = alertCtx.createGain();
+    osc.frequency.value = 1000;
+    g.gain.setValueAtTime(0.3, t + i * 0.3);
+    g.gain.setValueAtTime(0, t + i * 0.3 + 0.18);
+    osc.connect(g).connect(alertCtx.destination);
+    osc.start(t + i * 0.3);
+    osc.stop(t + i * 0.3 + 0.2);
+  }
 }
 
 function resultLabel(r: string) {

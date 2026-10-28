@@ -1,14 +1,14 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { registerSW } from 'virtual:pwa-register';
+import { initUpdates } from './core/updates';
 import { SessionProvider, useSession } from './session';
 import Login from './pages/Login';
 import Player from './pages/Player';
 import StatusBoard from './pages/StatusBoard';
 import './styles.css';
 
-registerSW({ immediate: true });
+initUpdates();
 
 function Guard({ children, admin = false }: { children: JSX.Element; admin?: boolean }) {
   const s = useSession();

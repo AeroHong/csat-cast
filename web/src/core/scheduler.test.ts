@@ -14,6 +14,7 @@ import {
   type CueState,
 } from './scheduler';
 import type { Template } from './types';
+import { validateTemplate } from './validate';
 
 const T: Template = {
   id: 't',
@@ -140,5 +141,23 @@ describe('기본 시간표', () => {
       const times = t.cues.map((c) => c.time);
       expect([...times].sort()).toEqual(times);
     }
+  });
+});
+
+describe('validateTemplate', () => {
+  it('기본 시간표는 모두 통과', () => {
+    for (const t of BUILTIN_TEMPLATES) expect(validateTemplate(t)).toEqual([]);
+  });
+  it('잘못된 시각·중복 id·빈 시간표를 잡아낸다', () => {
+    const bad = {
+      name: 'x',
+      cues: [
+        { id: 'a', time: '8:10', kind: 'ment', assetId: 'a' },
+        { id: 'a', time: '25:00:00', kind: 'beep', assetId: '' },
+      ],
+    };
+    expect(validateTemplate(bad).length).toBeGreaterThanOrEqual(4);
+    expect(validateTemplate({ name: 'x', cues: [] })).toContain('방송 항목 없음');
+    expect(validateTemplate(null)).toEqual(['시간표 형식이 아님']);
   });
 });

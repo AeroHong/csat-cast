@@ -38,3 +38,29 @@ node scripts/seed.ts schools seed/schools.csv
 node scripts/seed.ts admin <관리자 이메일>
 ```
 Functions(`minInstances: 1`) 사용으로 Blaze 요금제가 필요하다.
+
+## 다른 PC에서 이어서 작업하기
+git에 올라가지 않는 파일 2개를 직접 복사해야 한다.
+- `service-account.json` (프로젝트 루트) — 초기 데이터 등록용 비밀 키
+- `web/.env` — Firebase 웹 설정 (`web/.env.example` 참고, 값은 Firebase 콘솔 → 프로젝트 설정)
+
+```
+cd web && npm install && npm test && npm run dev
+npx firebase-tools login      # 배포할 때만
+```
+개발 서버에서 `http://localhost:5173/player?devArmed=1` → 오늘을 방송일로 가정하고 60배속으로 자동 방송을 시험할 수 있다.
+
+## 작업 현황 (2026-10-28 기준)
+완료
+- 자동 방송 엔진(서버 시각 동기화, 정밀 예약 재생), 학교 플레이어, 관리자 실시간 상태판
+- Firebase 배포: Hosting(https://csat-cast.web.app), Functions `/api/time`(서울), 보안 규칙, 시간표 초안 업로드, 관리자 권한, 테스트 학교 계정(9999999)
+- 안정성 강화: 방송 중 앱 업데이트 금지, 방송일 자동 시작, 새로고침 후 이어하기(중복 송출 방지), 오디오 꺼짐·PC 절전 감시,
+  같은 채널 이중 탭 차단, 스피커 확인, 오프라인 재시작 시 저장된 시각 사용, 잘못된 시간표 차단, 상태판 경고음, 전용 실행 아이콘(`web/public/launcher`)
+
+남은 일
+- [ ] 새로고침 이어하기 브라우저 실측 확인 (단위 테스트는 통과)
+- [ ] 위 변경사항 Hosting 재배포 (`cd web && npm run build && cd .. && npx firebase-tools deploy --only hosting`)
+- [ ] 실제 mp3 교체, 공식 시간표(일반·연장 시험실) 반영 후 verified=true
+- [ ] 시험장 목록 CSV로 학교 계정 일괄 생성
+- [ ] 학교별 시간표 조정 화면(큐 끄기/켜기, 자체 mp3 업로드), 관리자 관리 화면, 학교×교시 송출 표
+- [ ] 수능 주간 Functions `MIN_INSTANCES=1` 재배포

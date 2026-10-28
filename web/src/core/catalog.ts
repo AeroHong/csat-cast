@@ -2,6 +2,7 @@ import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { BUILTIN_TEMPLATES, DEFAULT_GLOBAL_CONFIG } from '../data/templates';
 import { fb } from './firebase';
 import type { Asset, GlobalConfig, SchoolProfile, Template } from './types';
+import { validateTemplate } from './validate';
 
 /**
  * 시간표·음원·학교 설정을 불러온다.
@@ -26,7 +27,13 @@ export async function loadTemplates(): Promise<Template[]> {
   if (fb) {
     try {
       const snap = await getDocs(collection(fb.db, 'templates'));
-      snap.forEach((d) => byId.set(d.id, { ...(d.data() as Template), id: d.id }));
+      snap.forEach((d) => {
+        const t = { ...(d.data() as Template), id: d.id };
+        const errors = validateTemplate(t);
+        // 잘못된 시간표는 쓰지 않는다 (내장 기본값 유지)
+        if (errors.length) console.error(`[csat-cast] 시간표 ${d.id} 오류로 무시:`, errors);
+        else byId.set(d.id, t);
+      });
     } catch {
       /* 내장 기본값 사용 */
     }

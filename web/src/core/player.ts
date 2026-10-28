@@ -1,7 +1,8 @@
 import { audioEngine, type AudioEngine, type PlayHandle } from './audio';
 import { serverClock, type ServerClock } from './clock';
 import type { Reporter } from './reporter';
-import { decide, initialStates, nextPending, type CueState, type PlannedCue } from './scheduler';
+import { restoreStates } from './runStore';
+import { decide, nextPending, type CueState, type PlannedCue } from './scheduler';
 import { startTicker } from './ticker';
 import type { RunMode } from './types';
 
@@ -19,9 +20,18 @@ export interface PlayerSnapshot {
   states: Record<string, CueState>;
   playing: string[];
   events: PlayerEvent[];
+  /** 지금 해결이 필요한 문제 (상태판에 빨간색으로 표시) */
+  alarms: string[];
+  /** 자동 방송 중인 날짜 (KST). 리허설은 null */
+  runDate: string | null;
 }
 
 const TICK_MS = 250;
+const WATCHDOG_MS = 1_000;
+/** 타이머가 이보다 오래 멈췄으면 경고 (PC 과부하·절전 등) */
+const STALL_WARN_MS = 3_000;
+
+export const ALARM_AUDIO_OFF = '오디오 출력이 꺼져 있음 — 방송 PC 화면을 클릭하세요';
 
 /**
  * 자동 방송 진행기. 계획(plan)을 받아 시각에 맞춰 음원을 재생하고 결과를 보고한다.
@@ -35,6 +45,11 @@ export class PlayerController {
   private mode: RunMode | 'idle' = 'idle';
   private stopTicker: (() => void) | null = null;
   private listeners = new Set<(s: PlayerSnapshot) => void>();
+  private alarms = new Set<string>();
+  private runDate: string | null = null;
+  private lastTick = 0;
+  private lastWatchdog = 0;
+  private stoppedByUser = false;
   reporter: Reporter | null = null;
 
   constructor(
@@ -42,26 +57,50 @@ export class PlayerController {
     private clock: ServerClock = serverClock,
   ) {}
 
-  arm(plan: PlannedCue[], mode: RunMode) {
-    this.disarm();
+  /**
+   * 자동 방송 시작.
+   * @param opts.restore 저장된 진행 상태 (새로고침 후 이어하기)
+   * @param opts.date 실제 날짜 자동 방송이면 그 날짜, 리허설이면 생략
+   */
+  arm(plan: PlannedCue[], mode: RunMode, opts: { restore?: Record<string, CueState>; date?: string } = {}) {
+    this.disarm(false);
     this.plan = plan;
     this.mode = mode;
-    this.states = initialStates(plan, this.clock.now());
-    const skipped = Object.values(this.states).filter((s) => s === 'skipped').length;
-    this.push('info', `${mode === 'live' ? '실전' : '테스트'} 자동 방송 시작 (큐 ${plan.length}개)`);
-    if (skipped) this.push('warn', `이미 지난 큐 ${skipped}개는 건너뜁니다`);
+    this.runDate = opts.date ?? null;
+    this.stoppedByUser = false;
+    const now = this.clock.now();
+    this.states = restoreStates(plan, opts.restore, now);
+    const v = Object.values(this.states);
+    const label = mode === 'live' ? '실전' : '테스트';
+    if (opts.restore) {
+      this.push('warn', `${label} 자동 방송 이어서 진행 (이미 송출 ${v.filter((s) => s === 'done').length}개 유지)`);
+    } else {
+      this.push('info', `${label} 자동 방송 시작 (방송 ${plan.length}개)`);
+    }
+    const skipped = plan.filter(({ cue }) => this.states[cue.id] === 'skipped' && opts.restore?.[cue.id] !== 'skipped').length;
+    if (skipped) this.push('warn', `이미 시각이 지난 방송 ${skipped}개는 건너뜁니다`);
+    this.lastTick = performance.now();
     this.stopTicker = startTicker(TICK_MS, () => this.tick());
     this.tick();
   }
 
-  disarm() {
+  /** @param byUser 담당자가 직접 중지한 경우 true (같은 날 자동 재시작 안 함) */
+  disarm(byUser = true) {
     this.stopTicker?.();
     this.stopTicker = null;
-    if (this.mode !== 'idle') this.push('info', '자동 방송 중지');
+    if (this.mode !== 'idle') {
+      this.push(byUser ? 'warn' : 'info', '자동 방송 중지');
+      this.stoppedByUser = byUser;
+    }
     this.audio.stopAll();
     this.handles.clear();
+    this.alarms.clear();
     this.mode = 'idle';
     this.emit();
+  }
+
+  get wasStoppedByUser() {
+    return this.stoppedByUser;
   }
 
   get armed() {
@@ -118,6 +157,8 @@ export class PlayerController {
         .filter(([, s]) => s === 'playing')
         .map(([id]) => id),
       events: this.events,
+      alarms: [...this.alarms],
+      runDate: this.runDate,
     };
   }
 
@@ -135,8 +176,18 @@ export class PlayerController {
   }
 
   private tick() {
-    const now = this.clock.now();
+    const perf = performance.now();
     let changed = false;
+    if (perf - this.lastTick > STALL_WARN_MS) {
+      this.push('warn', `방송 프로그램이 ${Math.round((perf - this.lastTick) / 1000)}초간 멈춰 있었습니다 (PC 절전·과부하 확인)`);
+      changed = true;
+    }
+    this.lastTick = perf;
+    if (perf - this.lastWatchdog >= WATCHDOG_MS) {
+      this.lastWatchdog = perf;
+      changed = this.watchdog() || changed;
+    }
+    const now = this.clock.now();
     for (const d of decide(this.plan, this.states, now)) {
       const item = this.plan.find((p) => p.cue.id === d.cueId)!;
       changed = true;
@@ -157,6 +208,31 @@ export class PlayerController {
       }
     }
     if (changed) this.emit();
+  }
+
+  /** 1초마다: 오디오 출력과 시계 상태 점검. 상태가 바뀌었으면 true */
+  private watchdog(): boolean {
+    let changed = false;
+    const gap = this.clock.detectSuspend();
+    if (gap) {
+      this.push('warn', `PC 절전/일시정지 감지 (${Math.round(gap / 1000)}초) — 시각을 다시 맞춥니다`);
+      changed = true;
+    }
+    const audioOk = this.audio.state === 'running';
+    if (!audioOk) {
+      if (!this.alarms.has(ALARM_AUDIO_OFF)) {
+        this.alarms.add(ALARM_AUDIO_OFF);
+        this.push('error', '오디오 출력이 꺼졌습니다. 다시 켜는 중…');
+        this.reporter?.update({ audioUnlocked: false, alarms: [...this.alarms] });
+        changed = true;
+      }
+      void this.audio.tryResume(300);
+    } else if (this.alarms.delete(ALARM_AUDIO_OFF)) {
+      this.push('info', '오디오 출력 복구됨');
+      this.reporter?.update({ audioUnlocked: true, alarms: [...this.alarms] });
+      changed = true;
+    }
+    return changed;
   }
 
   private schedule(item: PlannedCue, now: number) {

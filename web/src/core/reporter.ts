@@ -3,7 +3,7 @@ import { onDisconnect, onValue, ref, serverTimestamp as rtdbNow, update } from '
 import { fb } from './firebase';
 import type { RunMode } from './types';
 
-export const APP_VERSION = '0.1.0';
+export const APP_VERSION = '0.2.0';
 export const HEARTBEAT_MS = 30_000;
 
 /** Realtime DB status/{neisCode}/{channel} 에 기록되는 실시간 상태 */
@@ -20,6 +20,12 @@ export interface ChannelStatus {
   cacheReady: boolean;
   missingAssets: number;
   audioUnlocked: boolean;
+  /** 담당자가 테스트 소리를 듣고 '들렸어요'를 눌렀는가 (오늘 기준) */
+  soundConfirmed: boolean;
+  /** 클릭 없이도 소리가 켜지는 환경인가 (전용 실행 아이콘 사용 여부) */
+  autoplayAllowed: boolean;
+  /** 즉시 조치가 필요한 문제 */
+  alarms: string[];
   armed: boolean;
   nextCue: { id: string; label: string; at: number } | null;
   lastCue: { id: string; label: string; result: PlayResult; at: number } | null;

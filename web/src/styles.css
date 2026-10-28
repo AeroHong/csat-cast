@@ -113,3 +113,26 @@ label.row { flex-direction: row; }
 .tile-head { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
 .reasons { margin: 8px 0; padding-left: 18px; font-size: 0.9rem; }
 .tile-foot { font-size: 0.8rem; display: grid; gap: 2px; }
+
+.small { font-size: 0.85rem; }
+.narrow { max-width: 520px; }
+.help { margin: 8px 0 0; padding-left: 20px; line-height: 1.7; }
+.banner { background: var(--line); }
+
+/* 한 줄 상태 요약: 선생님이 화면을 보자마자 상황을 알 수 있게 */
+.headline { margin: 12px 0; padding: 16px 20px; border-radius: 12px; font-size: 1.05rem; border: 2px solid transparent; }
+.headline-title { font-size: 1.35rem; font-weight: 800; margin-bottom: 2px; }
+.headline.ok { background: var(--ok-bg); border-color: var(--ok); }
+.headline.warn { background: var(--warn-bg); border-color: var(--warn); }
+.headline.bad { background: var(--bad-bg); border-color: var(--bad); }
+.headline.idle { background: var(--panel); border-color: var(--line); }
+
+/* 방송 중 소리가 꺼졌을 때 전체 화면 경고 (어디를 눌러도 복구) */
+.overlay {
+  position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 16px; border: none; border-radius: 0; background: rgba(185, 28, 28, 0.94); color: #fff; font-size: 1.4rem; cursor: pointer;
+  animation: blink 1.2s ease-in-out infinite;
+}
+.overlay-title { font-size: clamp(2rem, 6vw, 3.5rem); font-weight: 800; }
+@keyframes blink { 50% { background: rgba(127, 29, 29, 0.97); } }
+@media (prefers-reduced-motion: reduce) { .overlay { animation: none; } }

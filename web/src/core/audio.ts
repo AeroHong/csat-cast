@@ -26,25 +26,38 @@ export class AudioEngine {
   private master: GainNode | null = null;
   private buffers = new Map<string, AudioBuffer>();
   private active = new Set<AudioBufferSourceNode>();
-  private keepAlive: OscillatorNode | null = null;
 
   get unlocked(): boolean {
     return this.ctx?.state === 'running';
   }
 
-  /** 반드시 사용자 클릭 이벤트 안에서 호출해야 한다 (브라우저 자동재생 정책). */
+  get state(): AudioContextState | 'none' {
+    return this.ctx?.state ?? 'none';
+  }
+
+  /** 사용자 클릭 이벤트 안에서 호출하면 확실히 켜진다 (브라우저 자동재생 정책). */
   async unlock(): Promise<boolean> {
     const ctx = this.ensureContext();
     if (ctx.state !== 'running') await ctx.resume();
-    if (!this.keepAlive) {
-      const osc = ctx.createOscillator();
-      const silent = ctx.createGain();
-      silent.gain.value = 0;
-      osc.connect(silent).connect(ctx.destination);
-      osc.start();
-      this.keepAlive = osc;
-    }
     return this.unlocked;
+  }
+
+  /**
+   * 클릭 없이 켜기 시도. 전용 실행 아이콘(자동재생 허용 옵션)으로 열었거나
+   * 브라우저가 이 사이트의 자동재생을 허용하면 성공한다. 막혀 있으면 resume()이 끝나지 않으므로 시간 제한을 둔다.
+   */
+  async tryResume(timeoutMs = 800): Promise<boolean> {
+    const ctx = this.ensureContext();
+    if (ctx.state === 'running') return true;
+    await Promise.race([ctx.resume().catch(() => undefined), new Promise((r) => setTimeout(r, timeoutMs))]);
+    return this.unlocked;
+  }
+
+  /** 오디오 출력 상태 변화(장치 분리, 시스템에 의한 중단 등) 감시 */
+  onStateChange(fn: () => void): () => void {
+    const ctx = this.ensureContext();
+    ctx.addEventListener('statechange', fn);
+    return () => ctx.removeEventListener('statechange', fn);
   }
 
   setVolume(v: number) {
@@ -140,6 +153,12 @@ export class AudioEngine {
       this.ctx = new AudioContext({ latencyHint: 'playback' });
       this.master = this.ctx.createGain();
       this.master.connect(this.ctx.destination);
+      // 무음 신호를 계속 흘려 브라우저가 오디오 출력을 멈추거나 탭을 절전시키지 않게 한다
+      const osc = this.ctx.createOscillator();
+      const silent = this.ctx.createGain();
+      silent.gain.value = 0;
+      osc.connect(silent).connect(this.ctx.destination);
+      osc.start();
     }
     return this.ctx;
   }
