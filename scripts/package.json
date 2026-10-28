@@ -1,0 +1,12 @@
+{
+  "name": "csat-cast-scripts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "audio": "node make-placeholder-audio.ts",
+    "seed": "node seed.ts"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0"
+  }
+}

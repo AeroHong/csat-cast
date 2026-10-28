@@ -1,0 +1,11 @@
+{
+  "rules": {
+    "status": {
+      ".read": "auth != null && auth.token.role == 'admin'",
+      "$school": {
+        ".read": "auth != null && auth.token.email == $school + '@csat-cast.app'",
+        ".write": "auth != null && (auth.token.email == $school + '@csat-cast.app' || auth.token.role == 'admin')"
+      }
+    }
+  }
+}

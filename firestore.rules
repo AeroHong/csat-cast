@@ -1,0 +1,40 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isAdmin() { return signedIn() && request.auth.token.role == 'admin'; }
+    // 학교 계정 이메일 = {나이스코드}@csat-cast.app
+    function isSchool(code) {
+      return signedIn() && request.auth.token.email == code + '@csat-cast.app';
+    }
+
+    // 공식 시간표·전역 설정: 로그인 사용자 읽기, admin만 수정
+    match /templates/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+    match /config/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // 학교 프로필: 자기 학교만 읽기. 채널 설정(큐 on/off, 추가 큐)만 학교가 수정 가능
+    match /schools/{code} {
+      allow read: if isSchool(code) || isAdmin();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (isSchool(code) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['channels']));
+
+      match /assets/{assetId} {
+        allow read, write: if isSchool(code) || isAdmin();
+      }
+    }
+
+    // 재생 기록: 학교는 자기 학교 기록만 추가, 수정·삭제 불가
+    match /playLogs/{id} {
+      allow create: if isSchool(request.resource.data.school);
+      allow read: if isAdmin() || (signedIn() && isSchool(resource.data.school));
+      allow update, delete: if false;
+    }
+  }
+}

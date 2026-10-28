@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+.firebase/
+seed/accounts-out.csv
+seed/schools.csv
+service-account*.json
+*.tsbuildinfo

@@ -1,0 +1,146 @@
+{
+  "p1-entry": {
+    "file": "p1-entry.wav",
+    "label": "[임시] 1교시 국어 입실 완료"
+  },
+  "p1-prep": {
+    "file": "p1-prep.wav",
+    "label": "[임시] 1교시 국어 예비령 (답안지 배부)"
+  },
+  "p1-ready": {
+    "file": "p1-ready.wav",
+    "label": "[임시] 1교시 국어 준비령 (문제지 배부)"
+  },
+  "p1-start": {
+    "file": "p1-start.wav",
+    "label": "[임시] 1교시 국어 본령 (시험 시작)"
+  },
+  "p1-10min": {
+    "file": "p1-10min.wav",
+    "label": "[임시] 1교시 국어 종료 10분 전"
+  },
+  "p1-5min": {
+    "file": "p1-5min.wav",
+    "label": "[임시] 1교시 국어 종료 5분 전"
+  },
+  "p1-end": {
+    "file": "p1-end.wav",
+    "label": "[임시] 1교시 국어 종료령"
+  },
+  "p2-prep": {
+    "file": "p2-prep.wav",
+    "label": "[임시] 2교시 수학 예비령 (답안지 배부)"
+  },
+  "p2-ready": {
+    "file": "p2-ready.wav",
+    "label": "[임시] 2교시 수학 준비령 (문제지 배부)"
+  },
+  "p2-start": {
+    "file": "p2-start.wav",
+    "label": "[임시] 2교시 수학 본령 (시험 시작)"
+  },
+  "p2-10min": {
+    "file": "p2-10min.wav",
+    "label": "[임시] 2교시 수학 종료 10분 전"
+  },
+  "p2-5min": {
+    "file": "p2-5min.wav",
+    "label": "[임시] 2교시 수학 종료 5분 전"
+  },
+  "p2-end": {
+    "file": "p2-end.wav",
+    "label": "[임시] 2교시 수학 종료령 (점심시간)"
+  },
+  "p3-prep": {
+    "file": "p3-prep.wav",
+    "label": "[임시] 3교시 영어 예비령 (답안지 배부)"
+  },
+  "p3-ready": {
+    "file": "p3-ready.wav",
+    "label": "[임시] 3교시 영어 준비령 (문제지 배부)"
+  },
+  "p3-start": {
+    "file": "p3-start.wav",
+    "label": "[임시] 3교시 영어 본령 (듣기평가 시작)"
+  },
+  "p3-10min": {
+    "file": "p3-10min.wav",
+    "label": "[임시] 3교시 영어 종료 10분 전"
+  },
+  "p3-5min": {
+    "file": "p3-5min.wav",
+    "label": "[임시] 3교시 영어 종료 5분 전"
+  },
+  "p3-end": {
+    "file": "p3-end.wav",
+    "label": "[임시] 3교시 영어 종료령"
+  },
+  "p4-prep": {
+    "file": "p4-prep.wav",
+    "label": "[임시] 4교시 한국사·탐구 예비령 (답안지 배부)"
+  },
+  "p4-ready": {
+    "file": "p4-ready.wav",
+    "label": "[임시] 4교시 한국사·탐구 준비령 (한국사 문제지 배부)"
+  },
+  "p4-start": {
+    "file": "p4-start.wav",
+    "label": "[임시] 4교시 한국사·탐구 한국사 본령"
+  },
+  "p4-kh-5min": {
+    "file": "p4-kh-5min.wav",
+    "label": "[임시] 4교시 한국사·탐구 한국사 종료 5분 전"
+  },
+  "p4-kh-end": {
+    "file": "p4-kh-end.wav",
+    "label": "[임시] 4교시 한국사·탐구 한국사 종료령 (문제지 회수)"
+  },
+  "p4-inq-ready": {
+    "file": "p4-inq-ready.wav",
+    "label": "[임시] 4교시 한국사·탐구 탐구 문제지 배부"
+  },
+  "p4-t1-start": {
+    "file": "p4-t1-start.wav",
+    "label": "[임시] 4교시 한국사·탐구 탐구 제1선택 본령"
+  },
+  "p4-t1-5min": {
+    "file": "p4-t1-5min.wav",
+    "label": "[임시] 4교시 한국사·탐구 탐구 제1선택 종료 5분 전"
+  },
+  "p4-t1-end": {
+    "file": "p4-t1-end.wav",
+    "label": "[임시] 4교시 한국사·탐구 탐구 제1선택 종료령 (문제지 회수)"
+  },
+  "p4-t2-start": {
+    "file": "p4-t2-start.wav",
+    "label": "[임시] 4교시 한국사·탐구 탐구 제2선택 본령"
+  },
+  "p4-t2-5min": {
+    "file": "p4-t2-5min.wav",
+    "label": "[임시] 4교시 한국사·탐구 탐구 제2선택 종료 5분 전"
+  },
+  "p4-t2-end": {
+    "file": "p4-t2-end.wav",
+    "label": "[임시] 4교시 한국사·탐구 4교시 종료령"
+  },
+  "p5-prep": {
+    "file": "p5-prep.wav",
+    "label": "[임시] 5교시 제2외국어/한문 예비령 (답안지 배부)"
+  },
+  "p5-ready": {
+    "file": "p5-ready.wav",
+    "label": "[임시] 5교시 제2외국어/한문 준비령 (문제지 배부)"
+  },
+  "p5-start": {
+    "file": "p5-start.wav",
+    "label": "[임시] 5교시 제2외국어/한문 본령 (시험 시작)"
+  },
+  "p5-5min": {
+    "file": "p5-5min.wav",
+    "label": "[임시] 5교시 제2외국어/한문 종료 5분 전"
+  },
+  "p5-end": {
+    "file": "p5-end.wav",
+    "label": "[임시] 5교시 제2외국어/한문 종료령 (시험 종료)"
+  }
+}
