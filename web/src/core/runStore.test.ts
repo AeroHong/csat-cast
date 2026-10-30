@@ -47,6 +47,18 @@ describe('restoreStates (새로고침 후 이어하기)', () => {
   });
 });
 
+describe('합본 파일 재생 중 새로고침', () => {
+  const combo: PlannedCue[] = [{ cue: { ...cue('combo', 'bell'), lateToleranceSec: 125, catchUp: true }, at: 0 }];
+
+  it('허용 시간 안이면 완료로 넘기지 않고 끊긴 지점부터 다시 재생한다 (16:07 본령을 살림)', () => {
+    expect(restoreStates(combo, { combo: 'playing' }, 60_000).combo).toBe('pending');
+  });
+
+  it('본령까지 지난 뒤면 완료로 둔다', () => {
+    expect(restoreStates(combo, { combo: 'playing' }, 130_000).combo).toBe('done');
+  });
+});
+
 describe('이어하기 기록은 같은 방송끼리만 이어받는다', () => {
   const mem = new Map<string, string>();
   globalThis.localStorage = {

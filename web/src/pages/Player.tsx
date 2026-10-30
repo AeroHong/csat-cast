@@ -214,7 +214,8 @@ export default function Player() {
 
   // 5) 서버 보고 (채널별 실시간 상태)
   useEffect(() => {
-    if (!profile || !channel) return;
+    // 로컬 모드는 서버 계정이 없어 보고할 곳이 없다 (보고하면 권한 오류만 반복됨)
+    if (!profile || !channel || neisCode === 'LOCAL') return;
     const r = new Reporter(neisCode, channel.id);
     reporterRef.current = r;
     player.reporter = r;

@@ -304,9 +304,11 @@ export class PlayerController {
       return;
     }
     try {
-      const h = this.audio.playAt(cue.assetId, at, now);
+      const offset = cue.catchUp ? Math.max(0, now - at) : 0;
+      const h = this.audio.playAt(cue.assetId, at, now, offset);
       this.handles.set(cue.id, h);
       this.states[cue.id] = 'scheduled';
+      if (offset >= 1000) this.push('warn', `${Math.round(offset / 1000)}초 늦어 앞부분을 건너뛰고 이어서 송출: ${cue.label}`, cue.id);
       void h.ended.then(() => {
         // 취소된 예약의 종료 이벤트가 늦게 와서 새로 건 예약을 완료로 바꾸지 않도록 같은 예약인지 확인
         const current = this.handles.get(cue.id);

@@ -22,6 +22,7 @@ export function validateTemplate(t: unknown): string[] {
     if (c?.kind !== 'bell' && c?.kind !== 'ment') errors.push(`${where}: 종류 오류`);
     if (typeof c?.assetId !== 'string' || !c.assetId) errors.push(`${where}: 음원 지정 없음`);
     if (c?.lateToleranceSec !== undefined && !(Number(c.lateToleranceSec) >= 0)) errors.push(`${where}: 허용 지연 오류`);
+    if (c?.catchUp !== undefined && typeof c.catchUp !== 'boolean') errors.push(`${where}: 이어서 재생 설정 오류`);
   });
   return errors;
 }

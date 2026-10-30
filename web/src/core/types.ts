@@ -11,6 +11,11 @@ export interface Cue {
   assetId: string;
   /** 예정 시각보다 이만큼 늦었으면 재생하지 않고 건너뛴다. 기본값은 kind에 따라 다름. */
   lateToleranceSec?: number;
+  /**
+   * true면 늦게 시작할 때 늦은 만큼 앞부분을 건너뛰고 재생해, 파일 뒤쪽 방송이 제시각에 나가게 한다.
+   * 여러 방송이 한 파일에 든 합본(예: 16:05 종료령 + 16:07 본령)용. 새로고침으로 재생이 끊겨도 이어서 재생한다.
+   */
+  catchUp?: boolean;
   /** true면 공식 시간표 항목 (학교에서 시간 변경 불가) */
   official?: boolean;
 }

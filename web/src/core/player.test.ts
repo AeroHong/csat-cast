@@ -7,7 +7,7 @@ import type { PlannedCue } from './scheduler';
 /** 소리 켜짐/꺼짐을 바꿀 수 있는 가짜 오디오. 예약·정지 기록을 남긴다. */
 class FakeAudio {
   state: AudioContextState = 'running';
-  played: { assetId: string; at: number }[] = [];
+  played: { assetId: string; at: number; offset?: number }[] = [];
   stopped: string[] = [];
   private enders: (() => void)[] = [];
   /** 디코딩 완료된 음원 (기본: 즉시 디코딩됨) */
@@ -43,8 +43,8 @@ class FakeAudio {
     this.ready.delete(id);
     this.released.push(id);
   }
-  playAt(assetId: string, serverAt: number, serverNow: number): PlayHandle {
-    this.played.push({ assetId, at: serverAt });
+  playAt(assetId: string, serverAt: number, serverNow: number, offsetMs = 0): PlayHandle {
+    this.played.push({ assetId, at: serverAt, ...(offsetMs ? { offset: offsetMs } : {}) });
     let end!: () => void;
     const ended = new Promise<void>((r) => (end = r));
     this.enders.push(end);
@@ -247,5 +247,37 @@ describe('음원 미리 준비 (디코딩) 와 메모리 해제', () => {
     audio.finishDecode('bell');
     await manual;
     expect(audio.played.map((p) => p.assetId)).toEqual(['bell']);
+  });
+});
+
+describe('합본 파일 (16:05 종료령 + 16:07 본령)', () => {
+  // 0초에 시작하는 합본, 본령 직전까지 125초 허용
+  const combo: PlannedCue[] = [{ cue: { ...cue('combo', 'bell'), lateToleranceSec: 125, catchUp: true }, at: 0 }];
+
+  it('늦게 시작하면 건너뛰지 않고 늦은 만큼 앞부분을 건너뛰어 재생한다 (뒤쪽 본령은 제시각)', () => {
+    audio.state = 'suspended';
+    player.arm(combo, 'test');
+    audio.state = 'running';
+    clock.t = 30_000; // 30초 늦게 소리가 켜짐 (일반 타종이면 건너뜀)
+    tick();
+    expect(audio.played).toEqual([{ assetId: 'combo', at: 0, offset: 30_000 }]);
+    expect(player.snapshot().states.combo).toBe('playing');
+    expect(player.snapshot().events[0].message).toContain('30초 늦어 앞부분을 건너뛰고 이어서 송출');
+  });
+
+  it('본령 시작 뒤 허용 시간까지 넘기면 건너뛴다', () => {
+    audio.state = 'suspended';
+    player.arm(combo, 'test');
+    audio.state = 'running';
+    clock.t = 126_000;
+    tick();
+    expect(audio.played).toHaveLength(0);
+    expect(player.snapshot().states.combo).toBe('skipped');
+  });
+
+  it('제시각에 시작하면 처음부터 재생한다', () => {
+    player.arm(combo, 'test');
+    tick();
+    expect(audio.played).toEqual([{ assetId: 'combo', at: 0 }]);
   });
 });
