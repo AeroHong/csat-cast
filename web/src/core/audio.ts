@@ -1,3 +1,5 @@
+import { getDownloadURL, ref } from 'firebase/storage';
+import { fb } from './firebase';
 import type { Asset } from './types';
 
 const AUDIO_CACHE = 'csat-audio-v1';
@@ -147,7 +149,7 @@ export class AudioEngine {
     await Promise.all(
       assets.map(async (a) => {
         try {
-          if (!this.bytes.has(a.id)) this.bytes.set(a.id, await fetchWithCache(a.url, cache));
+          if (!this.bytes.has(a.id)) this.bytes.set(a.id, await fetchWithCache(a, cache));
           result.loaded.push(a.id);
         } catch (e) {
           result.failed.push({ id: a.id, error: e instanceof Error ? e.message : String(e) });
@@ -328,10 +330,13 @@ function computePeaks(buf: AudioBuffer, n: number): Float32Array {
   return peaks;
 }
 
-async function fetchWithCache(url: string, cache: Cache | null): Promise<ArrayBuffer> {
+/** 캐시 이름은 asset.url. Storage 음원은 캐시에 없을 때만 다운로드 주소를 받아 온다 (오프라인이면 캐시로만 동작) */
+async function fetchWithCache(asset: Asset, cache: Cache | null): Promise<ArrayBuffer> {
+  const url = asset.url;
   const hit = await cache?.match(url);
   if (hit) return hit.arrayBuffer();
-  const res = await fetch(url);
+  if (asset.storagePath && !fb) throw new Error('서버 설정 없음');
+  const res = await fetch(asset.storagePath ? await getDownloadURL(ref(fb!.storage, asset.storagePath)) : url);
   if (!res.ok) throw new Error(`다운로드 실패 (${res.status})`);
   try {
     await cache?.put(url, res.clone());

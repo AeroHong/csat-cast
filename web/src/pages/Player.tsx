@@ -111,7 +111,7 @@ export default function Player() {
       const [p, t, b, s, g] = await Promise.all([
         loadSchool(neisCode),
         loadTemplates(),
-        loadBuiltinAssets().catch(() => []),
+        loadBuiltinAssets(neisCode !== 'LOCAL').catch(() => []),
         loadSchoolAssets(neisCode),
         loadGlobalConfig(),
       ]);

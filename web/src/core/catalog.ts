@@ -11,7 +11,11 @@ import { validateTemplate } from './validate';
 
 const LOCAL_PROFILE_KEY = 'csat-cast:local-profile';
 
-export async function loadBuiltinAssets(): Promise<Asset[]> {
+/**
+ * 평가원 기본 음원 목록. 음원은 공개 저장소·Hosting에 두지 않고 Firebase Storage(builtin/audio/)에서
+ * 로그인한 시험장만 받는다 (scripts/upload-audio.ts로 올림). 로컬 모드는 개발 PC의 web/public 음원을 쓴다.
+ */
+export async function loadBuiltinAssets(fromStorage: boolean): Promise<Asset[]> {
   const res = await fetch('/audio/builtin/manifest.json');
   const manifest = (await res.json()) as Record<string, { file: string; label?: string; sha256?: string }>;
   return Object.entries(manifest).map(([id, m]) => ({
@@ -19,6 +23,7 @@ export async function loadBuiltinAssets(): Promise<Asset[]> {
     label: m.label ?? id,
     // 내용 해시를 붙여 음원이 바뀌면 캐시된 옛 음원 대신 새로 받게 한다
     url: `/audio/builtin/${m.file}${m.sha256 ? `?v=${m.sha256.slice(0, 12)}` : ''}`,
+    storagePath: fromStorage ? `builtin/audio/${m.file}` : undefined,
     source: 'builtin' as const,
   }));
 }

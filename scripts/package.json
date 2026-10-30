@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "audio": "node make-placeholder-audio.ts",
-    "seed": "node seed.ts"
+    "seed": "node seed.ts",
+    "upload-audio": "node upload-audio.ts"
   },
   "dependencies": {
     "firebase-admin": "^12.7.0"

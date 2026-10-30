@@ -10,7 +10,7 @@
   - `src/core/player.ts` 자동 방송 진행기 / `reporter.ts` 실시간 상태·재생 기록 보고
   - `src/data/templates.ts` 2027 수능 안내방송 시간표 6개 유형 (평가원 방송대본 2026-10-05 기준)
 - `functions/` — `/api/time` (Firebase Functions, 서울 리전)
-- `scripts/` — 평가원 음원 가져오기(import-audio), 초기 데이터 등록(seed)
+- `scripts/` — 평가원 음원 가져오기(import-audio)·Storage 업로드(upload-audio), 초기 데이터 등록(seed)
 - `firestore.rules`, `database.rules.json`, `storage.rules`
 
 ## 로컬 실행
@@ -40,12 +40,14 @@ Firebase 설정(`web/.env`, `.env.example` 참고)이 없으면 서버 보고 �
 - 연장 시험실(1.5배/1.7배 등) 시간표는 대본에 없어 따로 등록해야 한다.
 
 ## 음원 (평가원 안내방송 음원)
-음원은 공개 저장소에 올리지 않는다(`.gitignore`). 평가원 음원 폴더(`타종 타입/1. …` ~ `6. …`)를 저장소 루트에 두고:
+음원은 공개 저장소·Hosting에 올리지 않고 **Firebase Storage**(`builtin/audio/`, 로그인한 시험장만 읽기)에서 받는다. 로컬 모드는 개발 PC의 `web/public/audio/builtin` 음원을 쓴다. 평가원 음원 폴더(`타종 타입/1. …` ~ `6. …`)를 저장소 루트에 두고:
 ```
 node scripts/import-audio.ts        # 또는 node scripts/import-audio.ts <폴더 경로>
 ```
 - 폴더 간 같은 파일의 내용 일치, 파일명 시각 = 시간표 시각, 폴더 N 구성 = 시간표 csat-N 을 검사하고, 하나라도 어긋나면 아무것도 바꾸지 않는다.
 - 고유 음원 40개(약 115MB)를 `web/public/audio/builtin/<큐 id>.mp3`로 복사하고 `manifest.json`(커밋 대상)을 갱신한다.
+- `set GOOGLE_APPLICATION_CREDENTIALS=service-account.json` 후 `node scripts/upload-audio.ts` → Storage에 업로드(바뀐 파일만, 버킷 CORS 설정 포함). Storage 규칙은 `firebase deploy --only storage`로 배포.
+- Hosting 배포에서는 mp3를 제외한다(`firebase.json` ignore).
 - 음원이 바뀌면 manifest의 해시로 학교 PC 캐시가 자동 갱신된다.
 - 서비스 워커는 음원을 미리 캐시하지 않는다. 학교 플레이어가 자기 유형에 필요한 음원만 받아 자체 캐시에 저장한다.
 
@@ -87,7 +89,7 @@ npx firebase-tools login      # 배포할 때만
 - [ ] 위 변경사항 Hosting 재배포 (`cd web && npm run build && cd .. && npx firebase-tools deploy --only hosting`)
 - [x] 실제 mp3 교체, 2027 방송대본 기준 시간표 6개 유형 반영 (2026-10-30)
 - [ ] 연장 시험실 시간표 등록
-- [ ] 배포 시 `node scripts/seed.ts templates`로 csat-1~6 등록(초안 general-4/5 삭제), 기존 학교 문서의 templateId(general-5 등) 갱신
+- [x] `node scripts/seed.ts templates`로 csat-1~6 등록(초안 general-4/5 삭제), 테스트 학교 9999999 → csat-2, 음원 Storage 업로드 (2026-10-30)
 - [ ] 시험장 목록 CSV로 학교 계정 일괄 생성
 - [ ] 학교별 시간표 조정 화면(큐 끄기/켜기, 자체 mp3 업로드), 관리자 관리 화면, 학교×교시 송출 표
 - [ ] 수능 주간 Functions `MIN_INSTANCES=1` 재배포

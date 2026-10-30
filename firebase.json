@@ -1,7 +1,7 @@
 {
   "hosting": {
     "public": "web/dist",
-    "ignore": ["firebase.json", "**/.*"],
+    "ignore": ["firebase.json", "**/.*", "audio/builtin/*.mp3"],
     "rewrites": [
       { "source": "/api/time", "function": { "functionId": "time", "region": "asia-northeast3" } },
       { "source": "**", "destination": "/index.html" }

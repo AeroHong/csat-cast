@@ -3,6 +3,12 @@ service firebase.storage {
   match /b/{bucket}/o {
     function isAdmin() { return request.auth != null && request.auth.token.role == 'admin'; }
 
+    // 평가원 기본 음원: 로그인한 시험장·관리자만 읽기, 업로드는 scripts/upload-audio.ts(서비스 계정)로만
+    match /builtin/audio/{file} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
     // 학교별 추가 음원: 자기 학교만, mp3/wav, 20MB 이하
     match /schools/{code}/assets/{file} {
       allow read: if request.auth != null

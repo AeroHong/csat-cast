@@ -29,7 +29,10 @@ export type AssetSource = 'builtin' | 'upload' | 'tts';
 export interface Asset {
   id: string;
   label: string;
+  /** 내려받을 주소. storagePath가 있으면 캐시 이름으로만 쓴다 (음원이 바뀌면 함께 바뀌는 고정 주소) */
   url: string;
+  /** Firebase Storage 경로. 있으면 여기서 내려받는다 (로그인 필요) */
+  storagePath?: string;
   source: AssetSource;
 }
 
