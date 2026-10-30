@@ -65,6 +65,16 @@ label.radio input { margin-top: 3px; }
 .tag.test { background: var(--warn); color: #fff; }
 .banner { padding: 10px 16px; border-radius: 8px; margin: 12px 0; }
 .banner.warn { background: var(--warn-bg); color: var(--text); }
+/* 시간표에서 재생 중인 줄 바로 아래 펼치는 상세 (진행·파형 | 스펙트럼) */
+.timeline tr.np-row td { background: var(--ok-bg); padding: 2px 10px 10px; border-bottom: 2px solid var(--ok); }
+.np-detail { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; align-items: end; }
+.np-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 4px; font-size: 0.9rem; }
+.np-bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.np-bar > div { height: 100%; background: var(--primary); }
+canvas.waveform { display: block; width: 100%; height: 52px; margin-top: 4px; }
+canvas.spectrum { display: block; width: 100%; height: 72px; border-radius: 6px; background: var(--panel); }
+@media (max-width: 760px) { .np-detail { grid-template-columns: 1fr; } }
+.dur-over { color: var(--bad); font-weight: 600; }
 .banner.bad { background: var(--bad-bg); color: var(--text); border: 2px solid var(--bad); font-weight: 600; }
 
 .login { max-width: 420px; margin: 8vh auto; padding: 0 16px; }
@@ -74,7 +84,36 @@ label.radio input { margin-top: 3px; }
 .bar select { margin-left: 8px; }
 .bar-right { display: flex; align-items: center; gap: 8px; }
 
-.player { max-width: 1000px; margin: 0 auto; padding: 0 16px 48px; }
+/* 실전 / 테스트 탭 */
+.tabs { display: flex; gap: 4px; background: var(--line); padding: 4px; border-radius: 10px; }
+.tabs button { border: none; background: transparent; padding: 8px 18px; border-radius: 7px; font-weight: 600; color: var(--muted); display: inline-flex; align-items: center; gap: 2px; }
+.tabs button.active { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+@media (max-width: 640px) { .tabs { order: 3; width: 100%; } .tabs button { flex: 1; justify-content: center; } }
+
+/* 리허설 예약 */
+.sched-list { list-style: none; padding: 0; margin: 8px 0 12px; display: grid; gap: 6px; }
+.sched-list li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; }
+.sched-list li > span:nth-child(3) { flex: 1; }
+.sched-list li.is-today { border-color: var(--primary); background: var(--ok-bg); }
+.sched-form { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.sched-form input[type='date'] { max-width: 200px; }
+.sched-form fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px 10px; margin: 0; }
+.sched-form legend { font-weight: 600; padding: 0 4px; }
+.sched-form .primary { align-self: flex-start; }
+.sched-form ul.error { margin: 0; padding-left: 18px; }
+.official-dates { margin-top: 14px; }
+
+/*
+ * 플레이어 레이아웃
+ * - 기본(좁은 화면): 한 열로 위에서 아래로
+ * - 1200px 이상(FHD 등): 화면 전체 너비·높이를 쓰는 2열. 왼쪽은 상태·제어, 오른쪽은 시간표.
+ *   페이지는 한 화면에 고정하고 각 열이 따로 스크롤된다.
+ */
+.player { padding: 0 16px 24px; }
+.player-body { display: grid; gap: 0 16px; }
+.timetable-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.timetable-head h2 { margin: 0; }
+.table-scroll { position: relative; overflow-x: auto; }
 .clock-panel { text-align: center; padding: 24px 0 8px; }
 .clock { font-size: clamp(3rem, 12vw, 6rem); font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
 .next { margin-top: 16px; font-size: 1.2rem; }
@@ -88,7 +127,9 @@ label.radio input { margin-top: 3px; }
 .checks .bad .dot { background: var(--bad); }
 
 .timeline { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
-.timeline th, .timeline td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+.timeline th, .timeline td { padding: 5px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+.timeline td:last-child { text-align: right; white-space: nowrap; }
+.timeline td:first-child, .timeline td:nth-child(4), .timeline td:nth-child(5) { white-space: nowrap; }
 .timeline tr.is-next { outline: 2px solid var(--primary); outline-offset: -2px; }
 .timeline tr.st-done td { color: var(--muted); }
 .timeline tr.st-playing { background: var(--ok-bg); font-weight: 700; }
@@ -141,3 +182,28 @@ label.radio input { margin-top: 3px; }
 .overlay-title { font-size: clamp(2rem, 6vw, 3.5rem); font-weight: 800; }
 @keyframes blink { 50% { background: rgba(127, 29, 29, 0.97); } }
 @media (prefers-reduced-motion: reduce) { .overlay { animation: none; } }
+
+/* 넓은 화면 2열 레이아웃 (기본 규칙을 덮어쓰도록 맨 끝에 둔다) */
+@media (min-width: 1200px) {
+  .player { height: 100vh; display: flex; flex-direction: column; padding-bottom: 12px; overflow: hidden; }
+  .player > .bar { flex: none; }
+  .player-body { flex: 1; min-height: 0; grid-template-columns: clamp(380px, 28vw, 520px) minmax(0, 1fr); }
+  .col-side { min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 4px; }
+  .col-main { min-height: 0; display: flex; flex-direction: column; }
+  .timetable-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .table-scroll { flex: 1; min-height: 0; overflow: auto; }
+  .timeline thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); box-shadow: 0 1px 0 var(--line); }
+  .clock-panel { padding: 8px 0 0; }
+  .clock { font-size: clamp(3rem, 4.2vw, 5rem); }
+  .next { margin-top: 6px; font-size: 1.05rem; }
+  .countdown { font-size: 1.7rem; }
+  .col-side .card, .col-side .headline, .col-side .banner { margin: 10px 0; }
+  .col-side .headline { padding: 12px 16px; }
+  .col-side .headline-title { font-size: 1.2rem; }
+  .events { max-height: 220px; }
+}
+/* FHD(1080) 미만 높이에서는 시간표 줄 간격을 줄여 더 많이 보이게 */
+@media (min-width: 1200px) and (max-height: 900px) {
+  .timeline th, .timeline td { padding-top: 3px; padding-bottom: 3px; }
+  .clock { font-size: clamp(2.5rem, 3.5vw, 3.8rem); }
+}

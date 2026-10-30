@@ -12,15 +12,22 @@ export interface SavedRun {
   /** 담당자가 직접 중지했으면 같은 날 자동으로 다시 시작하지 않는다 */
   stoppedByUser: boolean;
   savedAt: number;
+  /**
+   * 어떤 방송의 기록인지 (예: 실전, 예약 리허설 14:00 시작 10배속). 같은 날 다른 방송이 이 기록을 이어받아
+   * 실제로 안 나간 방송을 송출 완료로 건너뛰지 않도록 한다. 이전 버전 기록에는 없다.
+   */
+  planKey?: string;
 }
 
 const key = (school: string, channel: string) => `csat-cast:run:${school}:${channel}`;
 
-export function loadRun(school: string, channel: string, date: string): SavedRun | null {
+/** @param planKey 지금 진행하려는 방송. 주면 같은 방송의 기록만 돌려준다 (planKey 없는 이전 기록은 같은 날이면 인정) */
+export function loadRun(school: string, channel: string, date: string, planKey?: string): SavedRun | null {
   try {
     const raw = localStorage.getItem(key(school, channel));
     const run = raw ? (JSON.parse(raw) as SavedRun) : null;
-    return run && run.date === date ? run : null;
+    if (!run || run.date !== date) return null;
+    return !planKey || !run.planKey || run.planKey === planKey ? run : null;
   } catch {
     return null;
   }

@@ -169,6 +169,15 @@ describe('소리가 꺼져 있을 때 (자동재생 차단·오디오 장치 끊
   });
 });
 
+describe('자동 방송 시작 알림', () => {
+  it('첫 방송이 한참 뒤여도 시작하자마자 구독자에게 진행 중 상태를 알린다', () => {
+    const seen: boolean[] = [];
+    player.subscribe((s) => seen.push(s.armed));
+    player.arm([{ cue: cue('later', 'ment'), at: 3_600_000 }], 'test', { date: '2026-11-10' });
+    expect(seen.at(-1)).toBe(true);
+  });
+});
+
 describe('음원 미리 준비 (디코딩) 와 메모리 해제', () => {
   // 3분 전부터 준비: bell(10초)은 시작하자마자, ment(60초)도 준비 대상
   const longPlan: PlannedCue[] = [

@@ -89,6 +89,8 @@ export class PlayerController {
     this.lastTick = performance.now();
     this.stopTicker = startTicker(TICK_MS, () => this.tick());
     this.tick();
+    // 첫 방송이 한참 뒤여도 시작했다는 사실을 화면·저장소에 바로 알린다
+    this.emit();
   }
 
   /** @param byUser 담당자가 직접 중지한 경우 true (같은 날 자동 재시작 안 함) */

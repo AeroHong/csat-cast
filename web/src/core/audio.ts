@@ -7,6 +7,14 @@ export interface LoadResult {
   failed: { id: string; error: string }[];
 }
 
+export interface NowPlaying {
+  /** 재생마다 고유 (같은 음원을 두 번 틀어도 구분) */
+  key: number;
+  assetId: string;
+  positionSec: number;
+  durationSec: number;
+}
+
 export interface PlayHandle {
   /** 실제 재생이 시작될 서버 시각 (epoch ms) */
   startAt: number;
@@ -31,7 +39,13 @@ export class AudioEngine {
   private decoding = new Map<string, Promise<AudioBuffer>>();
   private decodeErrors = new Map<string, string>();
   private durations = new Map<string, number>();
+  /** 파형 표시용 요약 (구간별 최대 진폭, 0~1). 디코딩할 때 만들어 두고 음원을 내려도 남긴다. */
+  private peaksById = new Map<string, Float32Array>();
   private active = new Set<AudioBufferSourceNode>();
+  /** 재생 위치 표시용: 소스별 음원·시작 시각(AudioContext 시계)·길이 */
+  private playbacks = new Map<AudioBufferSourceNode, { key: number; assetId: string; startCtx: number; durationSec: number }>();
+  private playbackSeq = 0;
+  private analyser: AnalyserNode | null = null;
 
   get unlocked(): boolean {
     return this.ctx?.state === 'running';
@@ -87,6 +101,38 @@ export class AudioEngine {
 
   durationMs(assetId: string): number {
     return this.durations.get(assetId) ?? 0;
+  }
+
+  /** 파형 요약 (디코딩한 적이 있는 음원만) */
+  peaks(assetId: string): Float32Array | undefined {
+    return this.peaksById.get(assetId);
+  }
+
+  /** 지금 소리가 나고 있는 음원들 (예약만 되고 아직 시작 전인 것은 제외) */
+  nowPlaying(): NowPlaying[] {
+    const ctx = this.ctx;
+    if (!ctx) return [];
+    const out: NowPlaying[] = [];
+    for (const p of this.playbacks.values()) {
+      const pos = ctx.currentTime - p.startCtx;
+      if (pos >= 0 && pos <= p.durationSec) out.push({ key: p.key, assetId: p.assetId, positionSec: pos, durationSec: p.durationSec });
+    }
+    return out.sort((a, b) => a.key - b.key);
+  }
+
+  /** 실시간 주파수 스펙트럼 (0~255, 저음→고음). 오디오가 없으면 false */
+  frequencyData(out: Uint8Array): boolean {
+    if (!this.analyser) return false;
+    this.analyser.getByteFrequencyData(out);
+    return true;
+  }
+
+  get frequencyBins(): number {
+    return this.analyser?.frequencyBinCount ?? 0;
+  }
+
+  get sampleRate(): number {
+    return this.ctx?.sampleRate ?? 44100;
   }
 
   /**
@@ -158,6 +204,7 @@ export class AudioEngine {
       .decodeAudioData(bytes.slice(0))
       .then((buf) => {
         this.durations.set(assetId, Math.round(buf.duration * 1000));
+        if (!this.peaksById.has(assetId)) this.peaksById.set(assetId, computePeaks(buf, PEAK_BUCKETS));
         this.decodeErrors.delete(assetId);
         return buf;
       })
@@ -183,11 +230,14 @@ export class AudioEngine {
     const src = ctx.createBufferSource();
     src.buffer = buffer;
     src.connect(this.master!);
-    src.start(ctx.currentTime + delaySec);
+    const startCtx = ctx.currentTime + delaySec;
+    src.start(startCtx);
     this.active.add(src);
+    this.playbacks.set(src, { key: ++this.playbackSeq, assetId, startCtx, durationSec: buffer.duration });
     const ended = new Promise<void>((resolve) => {
       src.onended = () => {
         this.active.delete(src);
+        this.playbacks.delete(src);
         resolve();
       };
     });
@@ -212,6 +262,18 @@ export class AudioEngine {
     osc.stop(ctx.currentTime + durationSec);
   }
 
+  /** 특정 음원의 재생만 정지 (시간표 줄의 [정지] 버튼) */
+  stopAsset(assetId: string) {
+    for (const [src, p] of this.playbacks) {
+      if (p.assetId !== assetId) continue;
+      try {
+        src.stop();
+      } catch {
+        /* 이미 끝난 소스 */
+      }
+    }
+  }
+
   stopAll() {
     for (const s of this.active) {
       try {
@@ -221,6 +283,7 @@ export class AudioEngine {
       }
     }
     this.active.clear();
+    this.playbacks.clear();
   }
 
   private ensureContext(): AudioContext {
@@ -228,6 +291,11 @@ export class AudioEngine {
       this.ctx = new AudioContext({ latencyHint: 'playback' });
       this.master = this.ctx.createGain();
       this.master.connect(this.ctx.destination);
+      // 화면의 스펙트럼 표시용 분석기. 송출 경로와 따로 갈라 두어 표시 쪽 문제가 방송 소리에 영향을 주지 않게 한다.
+      this.analyser = this.ctx.createAnalyser();
+      this.analyser.fftSize = 2048;
+      this.analyser.smoothingTimeConstant = 0.75;
+      this.master.connect(this.analyser);
       // 무음 신호를 계속 흘려 브라우저가 오디오 출력을 멈추거나 탭을 절전시키지 않게 한다
       const osc = this.ctx.createOscillator();
       const silent = this.ctx.createGain();
@@ -237,6 +305,27 @@ export class AudioEngine {
     }
     return this.ctx;
   }
+}
+
+const PEAK_BUCKETS = 800;
+
+/** 파형 표시용: 전체를 n구간으로 나눠 구간별 최대 진폭(모든 채널 중 큰 값)을 구한다 */
+function computePeaks(buf: AudioBuffer, n: number): Float32Array {
+  const peaks = new Float32Array(n);
+  const size = Math.max(1, Math.floor(buf.length / n));
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+    const data = buf.getChannelData(ch);
+    for (let b = 0; b < n; b++) {
+      let max = peaks[b];
+      const end = Math.min(data.length, (b + 1) * size);
+      for (let i = b * size; i < end; i++) {
+        const v = data[i] < 0 ? -data[i] : data[i];
+        if (v > max) max = v;
+      }
+      peaks[b] = max;
+    }
+  }
+  return peaks;
 }
 
 async function fetchWithCache(url: string, cache: Cache | null): Promise<ArrayBuffer> {
