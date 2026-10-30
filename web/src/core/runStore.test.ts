@@ -48,14 +48,14 @@ describe('restoreStates (새로고침 후 이어하기)', () => {
 });
 
 describe('합본 파일 재생 중 새로고침', () => {
-  const combo: PlannedCue[] = [{ cue: { ...cue('combo', 'bell'), lateToleranceSec: 125, catchUp: true }, at: 0 }];
+  const combo: PlannedCue[] = [{ cue: { ...cue('combo', 'bell'), lateToleranceSec: 600, restartIfInterrupted: true }, at: 0 }];
 
-  it('허용 시간 안이면 완료로 넘기지 않고 끊긴 지점부터 다시 재생한다 (16:07 본령을 살림)', () => {
+  it('허용 시간 안이면 완료로 넘기지 않고 처음부터 다시 재생한다 (16:07 본령을 살림)', () => {
     expect(restoreStates(combo, { combo: 'playing' }, 60_000).combo).toBe('pending');
   });
 
-  it('본령까지 지난 뒤면 완료로 둔다', () => {
-    expect(restoreStates(combo, { combo: 'playing' }, 130_000).combo).toBe('done');
+  it('허용 시간을 지난 뒤면 완료로 둔다', () => {
+    expect(restoreStates(combo, { combo: 'playing' }, 601_000).combo).toBe('done');
   });
 });
 

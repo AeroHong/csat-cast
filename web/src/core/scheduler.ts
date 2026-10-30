@@ -64,6 +64,29 @@ export function shiftPlan(plan: PlannedCue[], startAt: number, speed = 1): Plann
   return plan.map(({ cue, at }) => ({ cue, at: Math.round(startAt + (at - first) / speed) }));
 }
 
+/**
+ * 본령이 늦게 울렸으면 그 시험의 뒤 방송(종료령까지)을 같은 만큼 늦춘 계획을 돌려준다 (시험 시간 보장).
+ * 종료령 다음 방송(쉬는 시간·다음 교시)은 원래 시각대로라 쉬는 시간이 줄어든다.
+ * 아직 울리지 않은 본령은 그 자신이 늦춰진 만큼을 그대로 이어받는다 (예: 첫 번째 시험이 늦으면 합본 종료령도 늦게 나가므로).
+ * @param starts 본령이 실제로 울린 시각
+ * @returns 늦춘 계획(시각순)과 큐별 늦춘 시간(ms)
+ */
+export function applyExamDelays(
+  plan: PlannedCue[],
+  starts: Record<string, number>,
+): { plan: PlannedCue[]; delays: Record<string, number> } {
+  const delays: Record<string, number> = {};
+  let shift = 0;
+  const out = plan.map(({ cue, at }) => {
+    const applied = shift;
+    if (applied > 0) delays[cue.id] = applied;
+    if (cue.examEnd) shift = 0;
+    if (cue.examStart) shift = starts[cue.id] !== undefined ? Math.max(0, starts[cue.id] - at) : applied;
+    return { cue, at: at + applied };
+  });
+  return { plan: out.sort((x, y) => x.at - y.at), delays };
+}
+
 export function toleranceMs(cue: Cue): number {
   return (cue.lateToleranceSec ?? DEFAULT_TOLERANCE_SEC[cue.kind]) * 1000;
 }

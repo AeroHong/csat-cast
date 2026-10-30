@@ -45,11 +45,10 @@ describe('2027 수능 안내방송 시간표 (평가원 대본 6개 유형)', ()
     expect(byId('csat-1').cues).toHaveLength(31);
   });
 
-  it('16:05 합본 파일(종료령 + 16:07 본령)은 늦어도 이어서 재생해 본령을 놓치지 않는다', () => {
+  it('16:05 합본 파일(종료령 + 16:07 본령)은 건너뛰지 않고, 끊기면 처음부터 다시, 늦으면 두 번째 시험을 늦춘다', () => {
     for (const t of BUILTIN_TEMPLATES) {
       const combo = t.cues.find((c) => c.assetId === 'p4-t1-end')!;
-      expect(combo.catchUp).toBe(true);
-      expect(combo.lateToleranceSec).toBe(125); // 본령(파일 120초 지점) 시작 5초 뒤까지
+      expect(combo).toMatchObject({ restartIfInterrupted: true, examEnd: true, examStart: true, lateToleranceSec: 600 });
       expect(t.cues.some((c) => c.time === '16:07:00')).toBe(false); // 16:07 본령은 따로 없음
     }
   });

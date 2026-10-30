@@ -2,7 +2,7 @@ import { audioEngine, type AudioEngine, type PlayHandle } from './audio';
 import { serverClock, type ServerClock } from './clock';
 import type { Reporter } from './reporter';
 import { restoreStates } from './runStore';
-import { decide, nextPending, type CueState, type PlannedCue } from './scheduler';
+import { applyExamDelays, decide, nextPending, type CueState, type PlannedCue } from './scheduler';
 import { startTicker } from './ticker';
 import type { RunMode } from './types';
 
@@ -18,6 +18,10 @@ export interface PlayerSnapshot {
   mode: RunMode | 'idle';
   plan: PlannedCue[];
   states: Record<string, CueState>;
+  /** 본령이 실제로 울린 시각 (이어하기 저장용) */
+  starts: Record<string, number>;
+  /** 본령이 늦어 늦춘 시간(ms). 늦춘 큐만 들어 있다 */
+  delays: Record<string, number>;
   playing: string[];
   events: PlayerEvent[];
   /** 지금 해결이 필요한 문제 (상태판에 빨간색으로 표시) */
@@ -43,7 +47,12 @@ export const ALARM_AUDIO_OFF = '오디오 출력이 꺼져 있음 — 방송 PC 
  * UI와 분리되어 있어 화면이 다시 그려져도 재생 상태가 유지된다.
  */
 export class PlayerController {
+  /** 받은 계획 그대로 */
+  private basePlan: PlannedCue[] = [];
+  /** 본령 지연을 반영한 계획 (실제로 이 시각에 송출) */
   private plan: PlannedCue[] = [];
+  private delays: Record<string, number> = {};
+  private starts: Record<string, number> = {};
   private states: Record<string, CueState> = {};
   private handles = new Map<string, PlayHandle>();
   /** 이 진행기가 디코딩을 요청해 둔 음원 (필요 없어지면 메모리에서 내린다) */
@@ -68,15 +77,22 @@ export class PlayerController {
    * 자동 방송 시작.
    * @param opts.restore 저장된 진행 상태 (새로고침 후 이어하기)
    * @param opts.date 실제 날짜 자동 방송이면 그 날짜, 리허설이면 생략
+   * @param opts.starts 저장된 본령 송출 시각 (늦춘 시각을 이어받는다)
    */
-  arm(plan: PlannedCue[], mode: RunMode, opts: { restore?: Record<string, CueState>; date?: string } = {}) {
+  arm(
+    plan: PlannedCue[],
+    mode: RunMode,
+    opts: { restore?: Record<string, CueState>; date?: string; starts?: Record<string, number> } = {},
+  ) {
     this.disarm(false);
-    this.plan = plan;
+    this.basePlan = plan;
+    this.starts = { ...opts.starts };
+    this.applyDelays();
     this.mode = mode;
     this.runDate = opts.date ?? null;
     this.stoppedByUser = false;
     const now = this.clock.now();
-    this.states = restoreStates(plan, opts.restore, now);
+    this.states = restoreStates(this.plan, opts.restore, now);
     const v = Object.values(this.states);
     const label = mode === 'live' ? '실전' : '테스트';
     if (opts.restore) {
@@ -131,6 +147,8 @@ export class PlayerController {
       const now = this.clock.now();
       const h = this.audio.playAt(item.cue.assetId, now, now);
       this.push('info', `수동 재생: ${item.cue.label}`, cueId);
+      // 본령을 직접 울렸으면 그때 시험이 시작된 것이므로 뒤 방송을 그에 맞춘다
+      this.recordStart(item, now);
       this.handles.set(`manual-${cueId}-${now}`, h);
       void h.ended.then(() => this.emit());
       this.reporter?.log({
@@ -168,6 +186,8 @@ export class PlayerController {
       mode: this.mode,
       plan: this.plan,
       states: { ...this.states },
+      starts: { ...this.starts },
+      delays: { ...this.delays },
       playing: Object.entries(this.states)
         .filter(([, s]) => s === 'playing')
         .map(([id]) => id),
@@ -304,11 +324,10 @@ export class PlayerController {
       return;
     }
     try {
-      const offset = cue.catchUp ? Math.max(0, now - at) : 0;
-      const h = this.audio.playAt(cue.assetId, at, now, offset);
+      const h = this.audio.playAt(cue.assetId, at, now);
       this.handles.set(cue.id, h);
       this.states[cue.id] = 'scheduled';
-      if (offset >= 1000) this.push('warn', `${Math.round(offset / 1000)}초 늦어 앞부분을 건너뛰고 이어서 송출: ${cue.label}`, cue.id);
+      this.recordStart(item, h.startAt);
       void h.ended.then(() => {
         // 취소된 예약의 종료 이벤트가 늦게 와서 새로 건 예약을 완료로 바꾸지 않도록 같은 예약인지 확인
         const current = this.handles.get(cue.id);
@@ -326,6 +345,25 @@ export class PlayerController {
       this.push('error', `재생 실패: ${cue.label} (${(e as Error).message})`, cue.id);
       this.report(item, 'failed', null, (e as Error).message);
     }
+  }
+
+  /** 본령이 실제로 울리는 시각을 기록하고, 늦었으면 이 시험의 뒤 방송을 늦춘다 */
+  private recordStart(item: PlannedCue, startAt: number) {
+    if (!item.cue.examStart) return;
+    this.starts[item.cue.id] = startAt;
+    const before = this.plan;
+    this.applyDelays();
+    const base = this.basePlan.find((b) => b.cue.id === item.cue.id)!;
+    const late = Math.round((startAt - base.at) / 1000);
+    if (late >= 1 && before.some((b, i) => b.at !== this.plan[i]?.at || b.cue.id !== this.plan[i]?.cue.id)) {
+      this.push('warn', `${item.cue.label} ${late}초 늦게 송출 → 이 시험의 뒤 방송을 ${late}초 늦춥니다 (시험 시간 보장)`, item.cue.id);
+    }
+  }
+
+  private applyDelays() {
+    const r = applyExamDelays(this.basePlan, this.starts);
+    this.plan = r.plan;
+    this.delays = r.delays;
   }
 
   private report(item: PlannedCue, result: 'played' | 'skipped' | 'failed', startedAt: number | null, detail?: string) {

@@ -17,6 +17,8 @@ export interface SavedRun {
    * 실제로 안 나간 방송을 송출 완료로 건너뛰지 않도록 한다. 이전 버전 기록에는 없다.
    */
   planKey?: string;
+  /** 본령이 실제로 울린 시각 (뒤 방송을 늦출 때 씀). 이전 버전 기록에는 없다 */
+  starts?: Record<string, number>;
 }
 
 const key = (school: string, channel: string) => `csat-cast:run:${school}:${channel}`;
@@ -45,7 +47,7 @@ export function saveRun(school: string, channel: string, run: SavedRun) {
  * 저장된 상태로 이어서 시작할 때의 큐 상태 계산.
  * - 완료/건너뜀/실패는 그대로 유지 (다시 송출하지 않음)
  * - 재생 중이었던 큐: 이미 소리가 나갔으므로 완료 처리 (중복 송출 방지).
- *   단 합본 파일(catchUp)은 허용 시간 안이면 끊긴 지점부터 이어서 재생한다.
+ *   단 합본 파일(restartIfInterrupted)은 허용 시간 안이면 처음부터 다시 재생한다.
  * - 예약만 된 큐: 시작 시각 전에 창이 닫혀 소리가 나가지 않았으므로 처음 시작할 때와 같은 규칙
  *   (허용 지연 이내면 다시 재생, 넘었으면 건너뜀). 시작 시각이 되면 player가 즉시 playing으로 저장한다.
  * - 나머지는 처음 시작할 때와 같은 규칙
@@ -60,8 +62,8 @@ export function restoreStates(
   for (const { cue } of plan) {
     const prev = saved[cue.id];
     if (prev === 'done' || prev === 'skipped' || prev === 'failed') states[cue.id] = prev;
-    // 이어서 재생하는 합본 파일은 아직 허용 시간 안이면 끊긴 지점부터 다시 재생 (뒤쪽 방송을 살린다)
-    else if (prev === 'playing' && !(cue.catchUp && states[cue.id] === 'pending')) states[cue.id] = 'done';
+    // 합본 파일은 아직 허용 시간 안이면 처음부터 다시 재생 (뒤쪽 방송을 살린다)
+    else if (prev === 'playing' && !(cue.restartIfInterrupted && states[cue.id] === 'pending')) states[cue.id] = 'done';
   }
   return states;
 }

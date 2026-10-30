@@ -63,6 +63,7 @@ label.radio input { margin-top: 3px; }
 .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; background: var(--line); margin-left: 6px; }
 .tag.live { background: var(--bad); color: #fff; }
 .tag.test { background: var(--warn); color: #fff; }
+.tag.delay { background: var(--warn); color: #fff; margin-left: 4px; padding: 1px 6px; }
 .banner { padding: 10px 16px; border-radius: 8px; margin: 12px 0; }
 .banner.warn { background: var(--warn-bg); color: var(--text); }
 /* 시간표에서 재생 중인 줄 바로 아래 펼치는 상세 (진행·파형 | 스펙트럼) */

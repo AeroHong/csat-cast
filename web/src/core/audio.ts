@@ -222,9 +222,9 @@ export class AudioEngine {
 
   /**
    * serverAt(서버 시각)에 재생되도록 예약. serverNow는 현재 서버 시각.
-   * 이미 지난 시각이면 즉시 재생한다. offsetMs만큼 앞부분을 건너뛰고 재생한다 (늦게 시작한 합본 파일).
+   * 이미 지난 시각이면 즉시 재생한다.
    */
-  playAt(assetId: string, serverAt: number, serverNow: number, offsetMs = 0): PlayHandle {
+  playAt(assetId: string, serverAt: number, serverNow: number): PlayHandle {
     const ctx = this.ensureContext();
     const buffer = this.buffers.get(assetId);
     if (!buffer) throw new Error(`음원이 준비되지 않았습니다: ${assetId}`);
@@ -232,12 +232,10 @@ export class AudioEngine {
     const src = ctx.createBufferSource();
     src.buffer = buffer;
     src.connect(this.master!);
-    const offsetSec = Math.min(Math.max(0, offsetMs / 1000), buffer.duration);
     const startCtx = ctx.currentTime + delaySec;
-    src.start(startCtx, offsetSec);
+    src.start(startCtx);
     this.active.add(src);
-    // 재생 위치 표시는 파일 처음 기준 (앞부분을 건너뛰었으면 그만큼 앞에서 시작한 것으로 본다)
-    this.playbacks.set(src, { key: ++this.playbackSeq, assetId, startCtx: startCtx - offsetSec, durationSec: buffer.duration });
+    this.playbacks.set(src, { key: ++this.playbackSeq, assetId, startCtx, durationSec: buffer.duration });
     const ended = new Promise<void>((resolve) => {
       src.onended = () => {
         this.active.delete(src);

@@ -281,7 +281,7 @@ export default function Player() {
     // 방송일 화면에서는 리허설을 시작할 수 없으므로, 돌고 있는 리허설은 전날 켜 둔 것 → 실제 방송으로 교체
     const saved = loadRun(neisCode, channel.id, today, planKey);
     runKeyRef.current = planKey;
-    player.arm(todayPlan(), armedToday.mode, { restore: saved?.states, date: today });
+    player.arm(todayPlan(), armedToday.mode, { restore: saved?.states, starts: saved?.starts, date: today });
   }, [armedToday?.date, armedToday?.label, channel, loaded, cues, duplicateTab, runningToday, stoppedToday, neisCode, today]);
 
   // 이 PC에 저장된 리허설 예약 불러오기
@@ -301,6 +301,7 @@ export default function Player() {
       date: snap.runDate,
       mode: snap.mode,
       states: snap.states,
+      starts: snap.starts,
       stoppedByUser: false,
       savedAt: Date.now(),
       planKey: runKeyRef.current ?? (snap.runDate === today ? planKey : undefined),
@@ -389,7 +390,7 @@ export default function Player() {
     if (!armedToday || !channel) return;
     void unlockAudio();
     runKeyRef.current = planKey;
-    player.arm(todayPlan(), armedToday.mode, { restore: savedRun?.states, date: today });
+    player.arm(todayPlan(), armedToday.mode, { restore: savedRun?.states, starts: savedRun?.starts, date: today });
   }
 
   function stopAuto() {
@@ -402,6 +403,7 @@ export default function Player() {
         date: runDate,
         mode: snap.mode === 'idle' ? 'test' : snap.mode,
         states: snap.states,
+        starts: snap.starts,
         stoppedByUser: true,
         savedAt: Date.now(),
         planKey: runKeyRef.current ?? (snap.runDate === today ? planKey : undefined),
@@ -815,7 +817,14 @@ export default function Player() {
                           data-cue={cue.id}
                           className={`st-${sounding ? 'playing' : st} ${next?.cue.id === cue.id ? 'is-next' : ''}`}
                         >
-                          <td className="mono">{kstTime(at)}</td>
+                          <td className="mono">
+                            {kstTime(at)}
+                            {snap.delays[cue.id] && (
+                              <span className="tag delay" title="본령이 늦게 울려 시험 시간을 보장하려고 늦춘 시각">
+                                +{formatDuration(snap.delays[cue.id] / 1000)}
+                              </span>
+                            )}
+                          </td>
                           <td>{cue.period}</td>
                           <td>
                             {cue.kind === 'bell' ? '🔔 ' : '📢 '}
