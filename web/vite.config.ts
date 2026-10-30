@@ -34,8 +34,9 @@ export default defineConfig({
         icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' }],
       },
       workbox: {
-        // 기본 음원까지 미리 캐시해 당일 인터넷이 끊겨도 재생 가능하게 한다.
-        globPatterns: ['**/*.{js,css,html,svg,json,mp3,wav}'],
+        // 앱 화면만 미리 캐시한다. 음원(약 115MB)은 모든 방문자에게 내려보내지 않고,
+        // 학교 플레이어가 자기 시간표에 필요한 것만 audio.ts의 자체 캐시(csat-audio-v1)에 저장해 오프라인에 대비한다.
+        globPatterns: ['**/*.{js,css,html,svg,json}'],
         maximumFileSizeToCacheInBytes: 20 * 1024 * 1024,
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [

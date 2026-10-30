@@ -24,7 +24,13 @@ export interface PlayHandle {
 export class AudioEngine {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
+  /** 내려받은 음원 원본(압축 상태). 디코딩한 PCM은 원본의 10배 이상이라 전부 올려 두지 않는다. */
+  private bytes = new Map<string, ArrayBuffer>();
+  /** 곧 재생할 음원만 디코딩해 둔다 (prepare → 재생 → release) */
   private buffers = new Map<string, AudioBuffer>();
+  private decoding = new Map<string, Promise<AudioBuffer>>();
+  private decodeErrors = new Map<string, string>();
+  private durations = new Map<string, number>();
   private active = new Set<AudioBufferSourceNode>();
 
   get unlocked(): boolean {
@@ -64,27 +70,38 @@ export class AudioEngine {
     if (this.master) this.master.gain.value = v;
   }
 
+  /** 음원을 내려받아 두었는가 (재생하려면 prepare로 디코딩까지 끝나야 함) */
   has(assetId: string) {
+    return this.bytes.has(assetId) && !this.decodeErrors.has(assetId);
+  }
+
+  /** 디코딩까지 끝나 바로 재생할 수 있는가 */
+  isReady(assetId: string) {
     return this.buffers.has(assetId);
   }
 
-  durationMs(assetId: string): number {
-    const b = this.buffers.get(assetId);
-    return b ? Math.round(b.duration * 1000) : 0;
+  /** 디코딩 실패 사유 (깨진 파일 등) */
+  decodeError(assetId: string): string | undefined {
+    return this.decodeErrors.get(assetId);
   }
 
+  durationMs(assetId: string): number {
+    return this.durations.get(assetId) ?? 0;
+  }
+
+  /**
+   * 음원 원본을 내려받는다 (캐시에 있으면 캐시에서). 디코딩은 하지 않으므로 캐시에 있으면 금방 끝난다.
+   * 새로고침 직후 곧 울릴 방송을 놓치지 않도록, 파일이 정상인지 확인(verify)은 따로 한다.
+   */
   async load(assets: Asset[], onProgress?: (done: number, total: number) => void): Promise<LoadResult> {
-    const ctx = this.ensureContext();
-    const cache = 'caches' in globalThis ? await caches.open(AUDIO_CACHE) : null;
+    this.ensureContext();
+    const cache = 'caches' in globalThis ? await caches.open(AUDIO_CACHE).catch(() => null) : null;
     const result: LoadResult = { loaded: [], failed: [] };
     let done = 0;
     await Promise.all(
       assets.map(async (a) => {
         try {
-          if (!this.buffers.has(a.id)) {
-            const bytes = await fetchWithCache(a.url, cache);
-            this.buffers.set(a.id, await ctx.decodeAudioData(bytes));
-          }
+          if (!this.bytes.has(a.id)) this.bytes.set(a.id, await fetchWithCache(a.url, cache));
           result.loaded.push(a.id);
         } catch (e) {
           result.failed.push({ id: a.id, error: e instanceof Error ? e.message : String(e) });
@@ -94,6 +111,64 @@ export class AudioEngine {
       }),
     );
     return result;
+  }
+
+  /**
+   * 내려받은 음원을 하나씩 디코딩해 정상인지 확인하고 길이를 기록한다 (메모리를 아끼려 결과는 바로 버림).
+   * 이미 재생 준비된 음원은 다시 디코딩하지 않는다. 실패한 음원 목록을 반환한다.
+   */
+  async verify(ids: string[], onProgress?: (done: number, total: number) => void): Promise<LoadResult['failed']> {
+    const failed: LoadResult['failed'] = [];
+    let done = 0;
+    for (const id of ids) {
+      try {
+        if (!this.buffers.has(id) && !this.durations.has(id)) await this.decode(id);
+      } catch (e) {
+        failed.push({ id, error: e instanceof Error ? e.message : String(e) });
+      }
+      onProgress?.(++done, ids.length);
+    }
+    return failed;
+  }
+
+  /** 곧 재생할 음원을 디코딩해 둔다. 이미 했거나 하는 중이면 그 결과를 기다린다. */
+  async prepare(assetId: string): Promise<void> {
+    if (this.buffers.has(assetId)) return;
+    this.buffers.set(assetId, await this.decode(assetId));
+  }
+
+  /** 재생이 끝난 음원의 디코딩 결과를 메모리에서 내린다 (원본은 남겨 다시 준비할 수 있음) */
+  release(assetId: string) {
+    this.buffers.delete(assetId);
+  }
+
+  /** 즉시 재생 (수동 재생·시험 재생용). 디코딩이 안 되어 있으면 먼저 한다. */
+  async playNow(assetId: string): Promise<PlayHandle> {
+    await this.prepare(assetId);
+    return this.playAt(assetId, 0, 0);
+  }
+
+  private decode(assetId: string): Promise<AudioBuffer> {
+    const pending = this.decoding.get(assetId);
+    if (pending) return pending;
+    const bytes = this.bytes.get(assetId);
+    if (!bytes) return Promise.reject(new Error(`음원을 내려받지 못했습니다: ${assetId}`));
+    // decodeAudioData는 넘긴 ArrayBuffer를 비우므로 복사본을 넘긴다
+    const p = this.ensureContext()
+      .decodeAudioData(bytes.slice(0))
+      .then((buf) => {
+        this.durations.set(assetId, Math.round(buf.duration * 1000));
+        this.decodeErrors.delete(assetId);
+        return buf;
+      })
+      .catch((e: unknown) => {
+        const msg = `재생할 수 없는 음원 파일 (${e instanceof Error ? e.message : String(e)})`;
+        this.decodeErrors.set(assetId, msg);
+        throw new Error(msg);
+      })
+      .finally(() => this.decoding.delete(assetId));
+    this.decoding.set(assetId, p);
+    return p;
   }
 
   /**

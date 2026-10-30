@@ -41,6 +41,8 @@ export default function Player() {
   const [cfg, setCfg] = useState<GlobalConfig | null>(null);
   const [progress, setProgress] = useState<[number, number]>([0, 0]);
   const [loadResult, setLoadResult] = useState<LoadResult | null>(null);
+  /** 음원 파일 확인 진행 상황 ([확인한 수, 전체]) — 끝나면 'done' */
+  const [verify, setVerify] = useState<[number, number] | 'done' | null>(null);
   const [clock, setClock] = useState<ClockStatus>(serverClock.getStatus());
   const [snap, setSnap] = useState<PlayerSnapshot>(player.snapshot());
   const [now, setNow] = useState(serverClock.now());
@@ -129,10 +131,25 @@ export default function Player() {
     const needed = new Set(cues.map((c) => c.assetId));
     const list = assets.filter((a) => needed.has(a.id));
     const missing = [...needed].filter((id) => !assets.some((a) => a.id === id));
+    let cancelled = false;
     setLoadResult(null);
-    void audioEngine.load(list, (d, t) => setProgress([d, t])).then((r) =>
-      setLoadResult({ loaded: r.loaded, failed: [...r.failed, ...missing.map((id) => ({ id, error: '음원 미등록' }))] }),
-    );
+    setVerify(null);
+    void (async () => {
+      const r = await audioEngine.load(list, (d, t) => setProgress([d, t]));
+      if (cancelled) return;
+      const failed = [...r.failed, ...missing.map((id) => ({ id, error: '음원 미등록' }))];
+      // 내려받기만 끝나면 방송을 시작할 수 있게 먼저 알린다 (새로고침 직후 곧 울릴 방송을 놓치지 않도록)
+      setLoadResult({ loaded: r.loaded, failed });
+      // 이어서 파일이 정상인지 하나씩 확인 (메모리를 아끼려 확인 후 바로 버림)
+      const broken = await audioEngine.verify(r.loaded, (d, t) => !cancelled && setVerify([d, t]));
+      if (cancelled) return;
+      setVerify('done');
+      if (broken.length)
+        setLoadResult({ loaded: r.loaded.filter((id) => !broken.some((b) => b.id === id)), failed: [...failed, ...broken] });
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [cues, assets]);
 
   // 3) 진행기 상태 구독 + 화면 시계
@@ -203,7 +220,8 @@ export default function Player() {
   }
 
   const loaded = loadResult !== null;
-  const assetsReady = loaded && loadResult.failed.length === 0 && cues.length > 0;
+  const verifying = loaded && verify !== 'done';
+  const assetsReady = loaded && !verifying && loadResult.failed.length === 0 && cues.length > 0;
   const clockUsable = clock.synced || clock.source === 'cached';
   const osDriftWarn = clockUsable && Math.abs(clock.osClockDriftMs) > OS_DRIFT_WARN_MS;
   const next = snap.plan.length ? player.next() : undefined;
@@ -369,11 +387,14 @@ export default function Player() {
   const checks: { ok: boolean; warn?: boolean; label: string; detail: string }[] = [
     {
       ok: assetsReady,
+      warn: verifying && loadResult.failed.length === 0,
       label: '음원',
       detail: loadResult
         ? loadResult.failed.length
           ? `${loadResult.failed.length}개 준비 실패 (해당 방송은 직접 하셔야 합니다): ${loadResult.failed.map((f) => f.id).join(', ')}`
-          : `${loadResult.loaded.length}개 모두 준비됨 (인터넷이 끊겨도 재생 가능)`
+          : verifying
+            ? `${loadResult.loaded.length}개 내려받음 · 파일 확인 중 ${Array.isArray(verify) ? `${verify[0]}/${verify[1]}` : ''}`
+            : `${loadResult.loaded.length}개 모두 준비됨 (인터넷이 끊겨도 재생 가능)`
         : `내려받는 중 ${progress[0]}/${progress[1]}`,
     },
     {
@@ -450,6 +471,13 @@ export default function Player() {
         {headline.detail && <div>{headline.detail}</div>}
       </div>
 
+      {channel && templates.length > 0 && !template && (
+        <div className="banner bad">
+          ⛔ 이 시험장에 지정된 시간표({channel.templateId})를 찾을 수 없어 자동 방송을 할 수 없습니다. 교육지원청에 시험장
+          유형(안내방송 유형 1~6) 설정을 요청하세요.
+          {session.localMode && ' 로컬 모드라면 로그아웃 후 시험장 상황을 다시 골라 시작하세요.'}
+        </div>
+      )}
       {template && !template.verified && (
         <div className="banner warn">⚠ 이 시간표는 아직 공식 시간표로 검증되지 않은 초안입니다.</div>
       )}
@@ -630,8 +658,11 @@ export default function Player() {
                       disabled={!audioEngine.has(cue.assetId)}
                       onClick={async () => {
                         await unlockAudio();
-                        if (snap.plan.length) player.playNow(cue.id);
-                        else audioEngine.playAt(cue.assetId, 0, 0);
+                        if (snap.plan.length) await player.playNow(cue.id);
+                        else {
+                          const h = await audioEngine.playNow(cue.assetId).catch(() => null);
+                          void h?.ended.then(() => audioEngine.release(cue.assetId));
+                        }
                       }}
                       title="이 방송을 지금 즉시 재생"
                     >

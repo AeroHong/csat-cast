@@ -30,6 +30,11 @@ const TICK_MS = 250;
 const WATCHDOG_MS = 1_000;
 /** 타이머가 이보다 오래 멈췄으면 경고 (PC 과부하·절전 등) */
 const STALL_WARN_MS = 3_000;
+/**
+ * 이만큼 앞서 음원을 디코딩해 둔다. 실제 음원은 수 분 길이라 디코딩하면 파일 하나에 수십~100MB가 되므로
+ * 전부 올려 두지 않고 곧 나갈 것만 준비했다가 끝나면 내린다.
+ */
+const PREPARE_AHEAD_MS = 3 * 60_000;
 
 export const ALARM_AUDIO_OFF = '오디오 출력이 꺼져 있음 — 방송 PC 화면을 클릭하세요';
 
@@ -41,6 +46,8 @@ export class PlayerController {
   private plan: PlannedCue[] = [];
   private states: Record<string, CueState> = {};
   private handles = new Map<string, PlayHandle>();
+  /** 이 진행기가 디코딩을 요청해 둔 음원 (필요 없어지면 메모리에서 내린다) */
+  private prepared = new Set<string>();
   private events: PlayerEvent[] = [];
   private mode: RunMode | 'idle' = 'idle';
   private stopTicker: (() => void) | null = null;
@@ -94,6 +101,8 @@ export class PlayerController {
     }
     this.audio.stopAll();
     this.handles.clear();
+    for (const id of this.prepared) this.audio.release(id);
+    this.prepared.clear();
     this.alarms.clear();
     this.mode = 'idle';
     this.emit();
@@ -108,17 +117,20 @@ export class PlayerController {
   }
 
   /** 수동 비상 재생: 해당 큐 음원을 지금 즉시 재생 */
-  playNow(cueId: string) {
+  async playNow(cueId: string) {
     const item = this.plan.find((p) => p.cue.id === cueId);
     if (!item) return;
-    const now = this.clock.now();
+    // 수동으로 재생한 큐는 자동 재생 대상에서 뺀다 (중복 방지). 디코딩을 기다리는 사이 자동 재생되지 않도록 먼저 바꾼다.
+    const wasPending = this.states[cueId] === 'pending';
+    if (wasPending) this.states[cueId] = 'done';
     try {
+      this.prepared.add(item.cue.assetId);
+      await this.audio.prepare(item.cue.assetId);
+      const now = this.clock.now();
       const h = this.audio.playAt(item.cue.assetId, now, now);
       this.push('info', `수동 재생: ${item.cue.label}`, cueId);
       this.handles.set(`manual-${cueId}-${now}`, h);
       void h.ended.then(() => this.emit());
-      // 수동으로 재생한 큐는 자동 재생 대상에서 뺀다 (중복 방지)
-      if (this.states[cueId] === 'pending') this.states[cueId] = 'done';
       this.reporter?.log({
         cueId,
         label: item.cue.label,
@@ -129,6 +141,7 @@ export class PlayerController {
         result: 'manual',
       });
     } catch (e) {
+      if (wasPending) this.states[cueId] = 'pending';
       this.push('error', `수동 재생 실패: ${(e as Error).message}`, cueId);
     }
     this.emit();
@@ -200,17 +213,25 @@ export class PlayerController {
         changed = true;
       }
     }
+    this.prepareUpcoming(now);
     for (const d of decide(this.plan, this.states, now)) {
       const item = this.plan.find((p) => p.cue.id === d.cueId)!;
+      const { assetId } = item.cue;
       if (d.type === 'skip') {
         changed = true;
         this.states[d.cueId] = 'skipped';
-        const reason = audioOn ? '시간 초과로 건너뜀' : '소리가 꺼져 있어 송출 못함';
+        const [reason, code] = !audioOn
+          ? ['소리가 꺼져 있어 송출 못함', 'audio off, late']
+          : this.audio.has(assetId) && !this.audio.isReady(assetId)
+            ? ['음원 준비가 늦어 송출 못함', 'decode late']
+            : ['시간 초과로 건너뜀', 'late'];
         this.push('warn', `${reason} (${Math.round(d.lateMs / 1000)}초 지연): ${item.cue.label}`, d.cueId);
-        this.report(item, 'skipped', null, `${audioOn ? 'late' : 'audio off, late'} ${d.lateMs}ms`);
+        this.report(item, 'skipped', null, `${code} ${d.lateMs}ms`);
         continue;
       }
       if (!audioOn) continue;
+      // 아직 디코딩 중이면 기다린다 (허용 지연을 넘기면 decide가 건너뜀으로 바꾼다). 실패했으면 schedule이 실패 처리.
+      if (this.audio.has(assetId) && !this.audio.isReady(assetId)) continue;
       changed = true;
       this.schedule(item, now);
     }
@@ -223,6 +244,27 @@ export class PlayerController {
       }
     }
     if (changed) this.emit();
+  }
+
+  /** 곧 나갈 큐의 음원은 미리 디코딩하고, 더 이상 필요 없는 음원은 메모리에서 내린다 */
+  private prepareUpcoming(now: number) {
+    const needed = new Set<string>();
+    for (const { cue, at } of this.plan) {
+      const s = this.states[cue.id];
+      if (s === 'playing' || ((s === 'pending' || s === 'scheduled') && at - now <= PREPARE_AHEAD_MS)) needed.add(cue.assetId);
+    }
+    for (const id of needed) {
+      if (this.prepared.has(id) || !this.audio.has(id)) continue;
+      this.prepared.add(id);
+      // 실패하면 audio가 사유를 기록하고 has()가 false가 되어 schedule에서 실패로 처리된다
+      this.audio.prepare(id).catch(() => this.emit());
+    }
+    // 이미 재생 중인 소리는 내려도 끝까지 재생된다 (재생기가 음원을 따로 붙잡고 있음)
+    for (const id of this.prepared) {
+      if (needed.has(id)) continue;
+      this.audio.release(id);
+      this.prepared.delete(id);
+    }
   }
 
   /** 1초마다: 오디오 출력과 시계 상태 점검. 상태가 바뀌었으면 true */
@@ -253,9 +295,10 @@ export class PlayerController {
   private schedule(item: PlannedCue, now: number) {
     const { cue, at } = item;
     if (!this.audio.has(cue.assetId)) {
+      const broken = this.audio.decodeError(cue.assetId);
       this.states[cue.id] = 'failed';
-      this.push('error', `음원 없음으로 재생 실패: ${cue.label}`, cue.id);
-      this.report(item, 'failed', null, 'asset not loaded');
+      this.push('error', `${broken ? '음원 파일 오류' : '음원 없음'}으로 재생 실패: ${cue.label}`, cue.id);
+      this.report(item, 'failed', null, broken ?? 'asset not loaded');
       return;
     }
     try {

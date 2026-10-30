@@ -1,146 +1,242 @@
 {
-  "p1-entry": {
-    "file": "p1-entry.wav",
-    "label": "[임시] 1교시 국어 입실 완료"
+  "p0-staff": {
+    "file": "p0-staff.mp3",
+    "label": "시험 준비 감독관 입실",
+    "source": "01-0805-0교시-감독관입실.mp3",
+    "sha256": "6e2b35dc3641b4c6df9ca530bdc869743539cb46f3a06b0af9cc848b4ca8404d"
+  },
+  "p0-notice": {
+    "file": "p0-notice.mp3",
+    "label": "시험 준비 입실 완료 · 유의사항 안내",
+    "source": "02-0810-0교시-안내.mp3",
+    "sha256": "2df09762e9619549964786bdf33e442cd8f7fccf1f1c403d6eaa2d97b431099c"
   },
   "p1-prep": {
-    "file": "p1-prep.wav",
-    "label": "[임시] 1교시 국어 예비령 (답안지 배부)"
+    "file": "p1-prep.mp3",
+    "label": "1교시 국어 예비령 (답안지 배부)",
+    "source": "03-0825-1교시-예비령.mp3",
+    "sha256": "f42c7c40900984cb40182e35bf75dc940878065894d241befc13e57987cbb0da"
   },
   "p1-ready": {
-    "file": "p1-ready.wav",
-    "label": "[임시] 1교시 국어 준비령 (문제지 배부)"
+    "file": "p1-ready.mp3",
+    "label": "1교시 국어 준비령 (문제지 배부)",
+    "source": "04-0835-1교시-준비령.mp3",
+    "sha256": "29b0fb89d2b2e9cab5de4193b456b9bb1eba301fcd60d5796e25d7debf340c31"
   },
   "p1-start": {
-    "file": "p1-start.wav",
-    "label": "[임시] 1교시 국어 본령 (시험 시작)"
+    "file": "p1-start.mp3",
+    "label": "1교시 국어 본령 (시험 시작)",
+    "source": "05-0840-1교시-본령.mp3",
+    "sha256": "cc756ed99b964d3f324fa795e8193efd42354b1b252668f18a8e578d3402cb7b"
   },
   "p1-10min": {
-    "file": "p1-10min.wav",
-    "label": "[임시] 1교시 국어 종료 10분 전"
-  },
-  "p1-5min": {
-    "file": "p1-5min.wav",
-    "label": "[임시] 1교시 국어 종료 5분 전"
+    "file": "p1-10min.mp3",
+    "label": "1교시 국어 종료 10분 전",
+    "source": "06-0950-1교시-종료전.mp3",
+    "sha256": "a7509315084b04de1101b290290b2d6cba51c3da686a9c7893d7130ae67bd6ba"
   },
   "p1-end": {
-    "file": "p1-end.wav",
-    "label": "[임시] 1교시 국어 종료령"
+    "file": "p1-end.mp3",
+    "label": "1교시 국어 종료령",
+    "source": "07-100-1교시-종료령.mp3",
+    "sha256": "117e7d210bd6fb7fb0bc2ccbf678819c05ef074a356d44916416719db6a79b6e"
+  },
+  "p2-staff": {
+    "file": "p2-staff.mp3",
+    "label": "2교시 수학 감독관 입실",
+    "source": "08-1015-2교시-입실.mp3",
+    "sha256": "8b1db3c32e438e1ff1c8eee401eb8de3c4d8062701d7452f896d1eee68355bb5"
   },
   "p2-prep": {
-    "file": "p2-prep.wav",
-    "label": "[임시] 2교시 수학 예비령 (답안지 배부)"
+    "file": "p2-prep.mp3",
+    "label": "2교시 수학 예비령 (답안지 배부)",
+    "source": "09-1020-2교시-예비령.mp3",
+    "sha256": "60c587c1a655feeb0a0d744e5863ddcca9647f6f30a902dd54c1191ae9fd4ed1"
   },
   "p2-ready": {
-    "file": "p2-ready.wav",
-    "label": "[임시] 2교시 수학 준비령 (문제지 배부)"
+    "file": "p2-ready.mp3",
+    "label": "2교시 수학 준비령 (문제지 배부)",
+    "source": "10-1025-2교시-준비령.mp3",
+    "sha256": "1949f4762df40973e225b61906a5e56a8031442631305399edf88fbf52aa81d0"
   },
   "p2-start": {
-    "file": "p2-start.wav",
-    "label": "[임시] 2교시 수학 본령 (시험 시작)"
+    "file": "p2-start.mp3",
+    "label": "2교시 수학 본령 (시험 시작)",
+    "source": "11-1030-2교시-본령.mp3",
+    "sha256": "e66ef9a46ea793a09b8f51e20d744372887e5c59a679f742d708a031d6b61ea6"
   },
   "p2-10min": {
-    "file": "p2-10min.wav",
-    "label": "[임시] 2교시 수학 종료 10분 전"
-  },
-  "p2-5min": {
-    "file": "p2-5min.wav",
-    "label": "[임시] 2교시 수학 종료 5분 전"
+    "file": "p2-10min.mp3",
+    "label": "2교시 수학 종료 10분 전",
+    "source": "12-1200-2교시-종료전.mp3",
+    "sha256": "d98de107c9a9335c45f92741bcf0ec4316a7d63e2a0bd07100098f7855b18ae5"
   },
   "p2-end": {
-    "file": "p2-end.wav",
-    "label": "[임시] 2교시 수학 종료령 (점심시간)"
+    "file": "p2-end.mp3",
+    "label": "2교시 수학 종료령 (점심시간)",
+    "source": "13-1210-2교시-종료령.mp3",
+    "sha256": "0f308cfa4b48554d814b73f969bb803a8a6fe0a08cbbcfe6b75cf27a810c95ea"
+  },
+  "p3-staff": {
+    "file": "p3-staff.mp3",
+    "label": "3교시 영어 감독관 입실",
+    "source": "14-1255-3교시-입실.mp3",
+    "sha256": "69c019244185f951d3adeeba7dd7f4722b4310eedd0709d9ab036de71e41e5e7"
   },
   "p3-prep": {
-    "file": "p3-prep.wav",
-    "label": "[임시] 3교시 영어 예비령 (답안지 배부)"
+    "file": "p3-prep.mp3",
+    "label": "3교시 영어 예비령 (답안지 배부)",
+    "source": "15-1300-3교시-예비령.mp3",
+    "sha256": "9003e1a04fe64f06ece6af202e73fda4e1e95401e83392668a48d160bfeaf5fc"
   },
   "p3-ready": {
-    "file": "p3-ready.wav",
-    "label": "[임시] 3교시 영어 준비령 (문제지 배부)"
-  },
-  "p3-start": {
-    "file": "p3-start.wav",
-    "label": "[임시] 3교시 영어 본령 (듣기평가 시작)"
+    "file": "p3-ready.mp3",
+    "label": "3교시 영어 준비령 (문제지 배부) · 13:10 듣기평가로 이어짐",
+    "source": "16-1305-3교시-준비령.mp3",
+    "sha256": "5e9c5f9c0ed5f3562426ae38a6e692eb80d8aefb6abe1b938a49811cf3e73034"
   },
   "p3-10min": {
-    "file": "p3-10min.wav",
-    "label": "[임시] 3교시 영어 종료 10분 전"
-  },
-  "p3-5min": {
-    "file": "p3-5min.wav",
-    "label": "[임시] 3교시 영어 종료 5분 전"
+    "file": "p3-10min.mp3",
+    "label": "3교시 영어 종료 10분 전",
+    "source": "17-1410-3교시-종료전.mp3",
+    "sha256": "07977b78611ba48254c2dd0715337cb697dc628432c58e3ab650c654a487ad8e"
   },
   "p3-end": {
-    "file": "p3-end.wav",
-    "label": "[임시] 3교시 영어 종료령"
+    "file": "p3-end.mp3",
+    "label": "3교시 영어 종료령",
+    "source": "18-1420-3교시-종료령.mp3",
+    "sha256": "40b9d7cac9bc2dbe77afcce2a0e44b5644fd959cacb977dead2f88319c7fe2eb"
+  },
+  "p4-staff": {
+    "file": "p4-staff.mp3",
+    "label": "4교시 한국사·탐구 감독관 입실",
+    "source": "19-1435-4교시-입실.mp3",
+    "sha256": "022a4ff6c3179d1dce99ef6583f9a9b763fdda23cd574b5617423f3f122119d2"
   },
   "p4-prep": {
-    "file": "p4-prep.wav",
-    "label": "[임시] 4교시 한국사·탐구 예비령 (답안지 배부)"
+    "file": "p4-prep.mp3",
+    "label": "4교시 한국사·탐구 한국사 예비령 (답안지 배부)",
+    "source": "20-1440-4교시-예비령.mp3",
+    "sha256": "07fe84fcbebfde411cb77b1e6d3f38bef9f6c5b740647007fdd4a8255ab1c7ba"
   },
   "p4-ready": {
-    "file": "p4-ready.wav",
-    "label": "[임시] 4교시 한국사·탐구 준비령 (한국사 문제지 배부)"
+    "file": "p4-ready.mp3",
+    "label": "4교시 한국사·탐구 한국사 준비령 (문제지 배부)",
+    "source": "21-1445-4교시-준비령.mp3",
+    "sha256": "9c38b5d2bc852f712dd40d97252800c471f3ded784361ab3f9f9124b020889b1"
   },
   "p4-start": {
-    "file": "p4-start.wav",
-    "label": "[임시] 4교시 한국사·탐구 한국사 본령"
+    "file": "p4-start.mp3",
+    "label": "4교시 한국사·탐구 한국사 본령",
+    "source": "22-1450-4교시-본령.mp3",
+    "sha256": "16c72ad93af4c86f0a1cb82357415ccf8550f70c3d5b052bf87340e4fc097130"
   },
   "p4-kh-5min": {
-    "file": "p4-kh-5min.wav",
-    "label": "[임시] 4교시 한국사·탐구 한국사 종료 5분 전"
+    "file": "p4-kh-5min.mp3",
+    "label": "4교시 한국사·탐구 한국사 종료 5분 전",
+    "source": "23-1515-4교시-종료전.mp3",
+    "sha256": "b209f84fb137630d0d45255b77f5b71b8483fb6feb5aa43efc4ea0e0749c7c9c"
   },
   "p4-kh-end": {
-    "file": "p4-kh-end.wav",
-    "label": "[임시] 4교시 한국사·탐구 한국사 종료령 (문제지 회수)"
+    "file": "p4-kh-end.mp3",
+    "label": "4교시 한국사·탐구 한국사 종료령",
+    "source": "24-1520-4교시-종료령.mp3",
+    "sha256": "7bdd1d5a0580ecdae9f89805dd414b7e39b3b26e6380e2386a5eeca48c0ce00b"
   },
-  "p4-inq-ready": {
-    "file": "p4-inq-ready.wav",
-    "label": "[임시] 4교시 한국사·탐구 탐구 문제지 배부"
+  "p4-inq-prep": {
+    "file": "p4-inq-prep.mp3",
+    "label": "4교시 한국사·탐구 탐구 예비령 (답안지 배부)",
+    "source": "25-1525-4교시-예비령.mp3",
+    "sha256": "8af7d7b36702d2ed09d4534c06711c99324ff7257b5b3057ba28d4a1c362211d"
+  },
+  "p4-inq-ready-a": {
+    "file": "p4-inq-ready-a.mp3",
+    "label": "4교시 한국사·탐구 탐구 준비령 A (선택과목 구분 시험실)",
+    "source": "26-1530-4교시-준비령A.mp3",
+    "sha256": "aceea0acfc0f2ccb10ec6a13099ecc59d01fec57198c24f219d43ad9924db23d"
+  },
+  "p4-inq-ready-b": {
+    "file": "p4-inq-ready-b.mp3",
+    "label": "4교시 한국사·탐구 탐구 준비령 B (선택과목 혼합 시험실)",
+    "source": "27-1530-4교시-준비령B.mp3",
+    "sha256": "ec2e619d79e72a7713e1f59748988ce4193df77086d84123a46f107b8129c27f"
   },
   "p4-t1-start": {
-    "file": "p4-t1-start.wav",
-    "label": "[임시] 4교시 한국사·탐구 탐구 제1선택 본령"
+    "file": "p4-t1-start.mp3",
+    "label": "4교시 한국사·탐구 탐구 첫 번째 본령",
+    "source": "28-1535-4교시-본령.mp3",
+    "sha256": "b043a4a15ab39eb41cb1f48b195e5c3ea0ea7dc55bc1dd4d0836ce62b4aa76e7"
   },
   "p4-t1-5min": {
-    "file": "p4-t1-5min.wav",
-    "label": "[임시] 4교시 한국사·탐구 탐구 제1선택 종료 5분 전"
+    "file": "p4-t1-5min.mp3",
+    "label": "4교시 한국사·탐구 탐구 첫 번째 종료 5분 전",
+    "source": "29-1600-4교시-종료전.mp3",
+    "sha256": "1cce6c771d04fdef95c6021d92c9eb2a176682fa30bd54b354951b288c73c1cc"
   },
   "p4-t1-end": {
-    "file": "p4-t1-end.wav",
-    "label": "[임시] 4교시 한국사·탐구 탐구 제1선택 종료령 (문제지 회수)"
-  },
-  "p4-t2-start": {
-    "file": "p4-t2-start.wav",
-    "label": "[임시] 4교시 한국사·탐구 탐구 제2선택 본령"
+    "file": "p4-t1-end.mp3",
+    "label": "4교시 한국사·탐구 탐구 첫 번째 종료령 · 16:07 두 번째 본령",
+    "source": "30-1605-4교시-종료령본령.mp3",
+    "sha256": "50eff89b9b486bed6152c59b6d56a47edefab96b314ce0d169f3c874aab4b8fd"
   },
   "p4-t2-5min": {
-    "file": "p4-t2-5min.wav",
-    "label": "[임시] 4교시 한국사·탐구 탐구 제2선택 종료 5분 전"
+    "file": "p4-t2-5min.mp3",
+    "label": "4교시 한국사·탐구 탐구 두 번째 종료 5분 전",
+    "source": "31-1632-4교시-종료전.mp3",
+    "sha256": "a4f2020db063b738fe440995cee7ad85bf88e3745d2d08733f59d839ed9c2ed2"
   },
-  "p4-t2-end": {
-    "file": "p4-t2-end.wav",
-    "label": "[임시] 4교시 한국사·탐구 4교시 종료령"
+  "p4-end-a": {
+    "file": "p4-end-a.mp3",
+    "label": "4교시 한국사·탐구 4교시 종료령 A (4교시로 종료)",
+    "source": "32-1637-4교시-종료령A.mp3",
+    "sha256": "242c7d1c0a51b05349e2bb55e3747502158504e9c320c11067af077e3aa320e4"
+  },
+  "p4-end-b": {
+    "file": "p4-end-b.mp3",
+    "label": "4교시 한국사·탐구 4교시 종료령 B (5교시로 종료)",
+    "source": "33-1637-4교시-종료령B.mp3",
+    "sha256": "346c023c2d0c5bc1daad71a9db23e64e12fe8283854d0d8bde84dd65dae34d5b"
+  },
+  "p4-end-c": {
+    "file": "p4-end-c.mp3",
+    "label": "4교시 한국사·탐구 4교시 종료령 C (4·5교시 종료 혼합)",
+    "source": "34-1637-4교시-종료령C.mp3",
+    "sha256": "3bccbc4c0239240a6a9d535e6f5fbffc1c51fbc789f4fa923937e5c99cf61e68"
+  },
+  "p5-staff": {
+    "file": "p5-staff.mp3",
+    "label": "5교시 제2외국어/한문 감독관 입실",
+    "source": "35-1650-5교시-입실.mp3",
+    "sha256": "429700d8be56de5eeaa0e1a7afe1a98f4e0736e59cac226185c6eabf96a71f02"
   },
   "p5-prep": {
-    "file": "p5-prep.wav",
-    "label": "[임시] 5교시 제2외국어/한문 예비령 (답안지 배부)"
+    "file": "p5-prep.mp3",
+    "label": "5교시 제2외국어/한문 예비령 (답안지 배부)",
+    "source": "36-1655-5교시-예비령.mp3",
+    "sha256": "00f95119e15a9eb01938a85be2e0bd7924cb50a0f5aa6daf8d4cfa7e4b83c14d"
   },
   "p5-ready": {
-    "file": "p5-ready.wav",
-    "label": "[임시] 5교시 제2외국어/한문 준비령 (문제지 배부)"
+    "file": "p5-ready.mp3",
+    "label": "5교시 제2외국어/한문 준비령 (문제지 배부)",
+    "source": "37-1700-5교시-준비령.mp3",
+    "sha256": "ab3e86388d4307dc3506e296c16b0933e0aabfb02a5a6a6d711f08e6b08b80c0"
   },
   "p5-start": {
-    "file": "p5-start.wav",
-    "label": "[임시] 5교시 제2외국어/한문 본령 (시험 시작)"
+    "file": "p5-start.mp3",
+    "label": "5교시 제2외국어/한문 본령 (시험 시작)",
+    "source": "38-1705-5교시-본령.mp3",
+    "sha256": "f5ea2eff2ae2f5436ec1bad9eb65fcae1be5e55fd2bbd151c7cdbb8681499bc4"
   },
-  "p5-5min": {
-    "file": "p5-5min.wav",
-    "label": "[임시] 5교시 제2외국어/한문 종료 5분 전"
+  "p5-10min": {
+    "file": "p5-10min.mp3",
+    "label": "5교시 제2외국어/한문 종료 10분 전",
+    "source": "39-1735-5교시-종료전.mp3",
+    "sha256": "849f0aeccb14f074c54f413b7667482c5354e13a941d812bbf54f00222ade329"
   },
   "p5-end": {
-    "file": "p5-end.wav",
-    "label": "[임시] 5교시 제2외국어/한문 종료령 (시험 종료)"
+    "file": "p5-end.mp3",
+    "label": "5교시 제2외국어/한문 종료령 (시험 종료)",
+    "source": "40-1745-5교시-종료령.mp3",
+    "sha256": "16e58e550a7b0e3b1b4468232740dab6660d79220c764cbdd6d5e6eeffe2b425"
   }
 }

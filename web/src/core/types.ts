@@ -44,11 +44,18 @@ export interface ChannelConfig {
   extraCues?: Cue[];
 }
 
+/** 4교시 탐구: 1과목·2과목 선택자를 시험실별로 나눔(split) / 한 시험실에 섞임(mixed) */
+export type InquiryRooms = 'split' | 'mixed';
+/** 시험장 종료 교시: 모두 4교시 / 모두 5교시 / 섞임 */
+export type EndPeriod = 4 | 5 | 'mixed';
+
 export interface SchoolProfile {
   neisCode: string;
   name: string;
   venueType?: string;
-  lastPeriod: 4 | 5;
+  /** 시험장 상황 (시간표 유형을 고르는 근거). 채널의 templateId가 실제로 쓰인다. */
+  inquiryRooms?: InquiryRooms;
+  endPeriod?: EndPeriod;
   inquiryNote?: string;
   channels: ChannelConfig[];
 }

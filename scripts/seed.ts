@@ -7,8 +7,11 @@
  *   node scripts/seed.ts admin someone@example.com # admin 권한 부여
  *
  * schools.csv 형식 (첫 줄 헤더, UTF-8):
- *   neisCode,name,venueType,lastPeriod,inquiryNote,extRooms,password
- *   7010000,○○고등학교,일반,5,과탐 위주,1.5x,초기비밀번호
+ *   neisCode,name,venueType,inquiryRooms,endPeriod,inquiryNote,extRooms,password
+ *   7010000,○○고등학교,일반,구분,5,과탐 위주,1.5x,초기비밀번호
+ * inquiryRooms: 4교시 탐구 시험실 — 구분(1·2과목 선택자를 시험실별로 나눔) / 혼합(섞인 시험실 있음)
+ * endPeriod: 시험장 종료 교시 — 4 / 5 / 혼합
+ *   → 평가원 안내방송 유형 1~6(시간표 csat-1~6)이 정해진다. 값이 틀리면 그 학교는 건너뛴다.
  * extRooms: 연장 시험실 템플릿 접미사를 | 로 구분 (예: 1.5x|1.7x) → 채널 ext-1.5x 등 생성
  * password를 비워 두면 무작위 생성 후 결과 파일(seed/accounts-out.csv)에 기록한다.
  */
@@ -16,8 +19,12 @@ import { randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { getFirestore } from 'firebase-admin/firestore';
-import { BUILTIN_TEMPLATES, DEFAULT_GLOBAL_CONFIG } from '../web/src/data/templates.ts';
+import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import type { EndPeriod, InquiryRooms } from '../web/src/core/types.ts';
+import { BUILTIN_TEMPLATES, DEFAULT_GLOBAL_CONFIG, csatTemplateId } from '../web/src/data/templates.ts';
+
+/** 2027 대본 이전의 초안 시간표 (csat-1~6으로 대체됨) */
+const LEGACY_TEMPLATE_IDS = ['general-4', 'general-5'];
 
 initializeApp();
 const auth = getAuth();
@@ -27,9 +34,10 @@ const [cmd, arg] = process.argv.slice(2);
 async function seedTemplates() {
   const batch = db.batch();
   for (const t of BUILTIN_TEMPLATES) batch.set(db.doc(`templates/${t.id}`), t);
+  for (const id of LEGACY_TEMPLATE_IDS) batch.delete(db.doc(`templates/${id}`));
   batch.set(db.doc('config/global'), DEFAULT_GLOBAL_CONFIG);
   await batch.commit();
-  console.log(`시간표 ${BUILTIN_TEMPLATES.length}개 + 전역 설정 등록 완료`);
+  console.log(`시간표 ${BUILTIN_TEMPLATES.length}개 + 전역 설정 등록 완료 (초안 시간표 ${LEGACY_TEMPLATE_IDS.join(', ')} 삭제)`);
 }
 
 function parseCsv(text: string): Record<string, string>[] {
@@ -49,6 +57,12 @@ async function seedSchools(path: string) {
       console.warn(`건너뜀 (학교코드 형식 오류): ${code}`);
       continue;
     }
+    const inquiry = ({ 구분: 'split', 혼합: 'mixed' } as Record<string, InquiryRooms>)[r.inquiryRooms];
+    const end = ({ '4': 4, '5': 5, 혼합: 'mixed' } as Record<string, EndPeriod>)[r.endPeriod];
+    if (!inquiry || end === undefined) {
+      console.warn(`건너뜀 (시험장 상황 오류: inquiryRooms=${r.inquiryRooms}, endPeriod=${r.endPeriod}): ${code} ${r.name}`);
+      continue;
+    }
     const email = `${code}@csat-cast.app`;
     const password = r.password || randomBytes(6).toString('base64url');
     try {
@@ -57,16 +71,17 @@ async function seedSchools(path: string) {
     } catch {
       await auth.createUser({ email, password, displayName: r.name });
     }
-    const lastPeriod = r.lastPeriod === '4' ? 4 : 5;
     const ext = (r.extRooms ?? '').split('|').filter(Boolean);
     await db.doc(`schools/${code}`).set(
       {
         name: r.name,
         venueType: r.venueType ?? '',
-        lastPeriod,
+        inquiryRooms: inquiry,
+        endPeriod: end,
+        lastPeriod: FieldValue.delete(),
         inquiryNote: r.inquiryNote ?? '',
         channels: [
-          { id: 'main', label: '전체 방송', templateId: `general-${lastPeriod}` },
+          { id: 'main', label: '전체 방송', templateId: csatTemplateId(inquiry, end) },
           ...ext.map((x) => ({ id: `ext-${x}`, label: `연장 시험실 ${x}`, templateId: `ext-${x}` })),
         ],
       },

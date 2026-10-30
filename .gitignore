@@ -8,3 +8,7 @@ seed/accounts-out.csv
 seed/schools.csv
 service-account*.json
 *.tsbuildinfo
+
+# 평가원 안내방송 음원 (공개 저장소에 올리지 않음, scripts/import-audio.ts로 가져옴)
+/타종 타입/
+web/public/audio/builtin/*.mp3

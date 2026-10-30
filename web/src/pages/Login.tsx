@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { saveLocalProfile, defaultProfile } from '../core/catalog';
+import { DEFAULT_TEMPLATE_ID, saveLocalProfile, defaultProfile } from '../core/catalog';
 import { firebaseEnabled } from '../core/firebase';
-import { BUILTIN_TEMPLATES } from '../data/templates';
 import { useSession } from '../session';
+import SituationPicker from './SituationPicker';
 
 export default function Login() {
   const s = useSession();
@@ -12,7 +12,7 @@ export default function Login() {
   const [pw, setPw] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
-  const [localTemplate, setLocalTemplate] = useState('general-5');
+  const [localTemplate, setLocalTemplate] = useState(DEFAULT_TEMPLATE_ID);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -59,16 +59,7 @@ export default function Login() {
 
       <div className="card">
         <h2>로컬 모드 {firebaseEnabled && <small className="muted">(서버 보고 없이 재생만)</small>}</h2>
-        <label>
-          시간표
-          <select value={localTemplate} onChange={(e) => setLocalTemplate(e.target.value)}>
-            {BUILTIN_TEMPLATES.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <SituationPicker value={localTemplate} onChange={setLocalTemplate} />
         <button className="big" onClick={local}>
           로컬 모드로 시작
         </button>
