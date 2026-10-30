@@ -169,7 +169,11 @@ async function fetchWithCache(url: string, cache: Cache | null): Promise<ArrayBu
   if (hit) return hit.arrayBuffer();
   const res = await fetch(url);
   if (!res.ok) throw new Error(`다운로드 실패 (${res.status})`);
-  await cache?.put(url, res.clone());
+  try {
+    await cache?.put(url, res.clone());
+  } catch {
+    /* 캐시 저장 실패(브라우저 저장소 오류 등): 오프라인 대비만 안 될 뿐 이번 재생에는 지장 없음 */
+  }
   return res.arrayBuffer();
 }
 

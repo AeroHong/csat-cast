@@ -30,6 +30,17 @@ describe('restoreStates (새로고침 후 이어하기)', () => {
     expect(s.c).toBe('pending');
   });
 
+  it('타종 직전(예약 상태)에 창이 닫혔다가 허용 지연 이내에 다시 열리면 다시 재생한다', () => {
+    // b는 60초 타종, 59초에 예약된 채 닫힘 → 63초에 다시 열림 (타종 허용 5초 이내)
+    const s = restoreStates(plan, { a: 'done', b: 'scheduled' }, 63_000);
+    expect(s.b).toBe('pending');
+  });
+
+  it('예약 상태로 닫혔다가 허용 지연을 넘겨 다시 열리면 송출 완료가 아니라 건너뜀으로 남긴다', () => {
+    const s = restoreStates(plan, { a: 'done', b: 'scheduled' }, 70_000);
+    expect(s.b).toBe('skipped');
+  });
+
   it('PC가 꺼져 있던 동안 지나간 큐는 건너뜀, 이후 큐는 대기', () => {
     const s = restoreStates(plan, { a: 'done' }, 300_000);
     expect(s).toEqual({ a: 'done', b: 'skipped', c: 'skipped', d: 'pending' });

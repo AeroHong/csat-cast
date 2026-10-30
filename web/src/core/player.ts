@@ -188,15 +188,30 @@ export class PlayerController {
       changed = this.watchdog() || changed;
     }
     const now = this.clock.now();
+    // 소리가 꺼진 오디오에 걸어 둔 예약은 소리 없이 시각만 지나가고, 켜지는 순간 늦게 울린다.
+    // 꺼져 있는 동안은 예약하지 않고 대기로 두어, 켜진 뒤 허용 지연 이내면 재생·넘었으면 건너뜀으로 처리한다.
+    const audioOn = this.audio.state === 'running';
+    if (!audioOn) {
+      for (const [id, s] of Object.entries(this.states)) {
+        if (s !== 'scheduled') continue;
+        this.handles.get(id)?.stop();
+        this.handles.delete(id);
+        this.states[id] = 'pending';
+        changed = true;
+      }
+    }
     for (const d of decide(this.plan, this.states, now)) {
       const item = this.plan.find((p) => p.cue.id === d.cueId)!;
-      changed = true;
       if (d.type === 'skip') {
+        changed = true;
         this.states[d.cueId] = 'skipped';
-        this.push('warn', `시간 초과로 건너뜀 (${Math.round(d.lateMs / 1000)}초 지연): ${item.cue.label}`, d.cueId);
-        this.report(item, 'skipped', null, `late ${d.lateMs}ms`);
+        const reason = audioOn ? '시간 초과로 건너뜀' : '소리가 꺼져 있어 송출 못함';
+        this.push('warn', `${reason} (${Math.round(d.lateMs / 1000)}초 지연): ${item.cue.label}`, d.cueId);
+        this.report(item, 'skipped', null, `${audioOn ? 'late' : 'audio off, late'} ${d.lateMs}ms`);
         continue;
       }
+      if (!audioOn) continue;
+      changed = true;
       this.schedule(item, now);
     }
     // 예약된 큐가 시작 시각에 도달하면 playing으로 표시
@@ -248,6 +263,9 @@ export class PlayerController {
       this.handles.set(cue.id, h);
       this.states[cue.id] = 'scheduled';
       void h.ended.then(() => {
+        // 취소된 예약의 종료 이벤트가 늦게 와서 새로 건 예약을 완료로 바꾸지 않도록 같은 예약인지 확인
+        const current = this.handles.get(cue.id);
+        if (current && current !== h) return;
         if (this.states[cue.id] === 'playing' || this.states[cue.id] === 'scheduled') {
           this.states[cue.id] = 'done';
           this.push('info', `송출 완료: ${cue.label}`, cue.id);
