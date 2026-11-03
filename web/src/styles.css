@@ -184,6 +184,52 @@ canvas.spectrum { display: block; width: 100%; height: 72px; border-radius: 6px;
 @keyframes blink { 50% { background: rgba(127, 29, 29, 0.97); } }
 @media (prefers-reduced-motion: reduce) { .overlay { animation: none; } }
 
+/* 시간표 편집 (학교 자체 시간표·음원) */
+label.button {
+  display: inline-flex; flex-direction: row; align-items: center; padding: 8px 14px; border-radius: 8px;
+  border: 1px solid var(--primary); background: var(--primary); color: #fff; cursor: pointer; font-weight: 600;
+}
+label.button.disabled { opacity: 0.45; cursor: not-allowed; }
+.upload-row input[type='text'] { flex: 1; min-width: 200px; }
+.asset-list { width: 100%; border-collapse: collapse; margin-top: 10px; }
+.asset-list td { padding: 6px 8px; border-top: 1px solid var(--line); vertical-align: middle; }
+.asset-list td.actions { text-align: right; white-space: nowrap; }
+.asset-list td.actions button { margin-left: 6px; padding: 4px 10px; }
+.edit-table input[type='text'], .edit-table select { width: 100%; padding: 5px 6px; }
+.edit-table input[type='time'] { padding: 5px 6px; }
+.edit-table td { vertical-align: middle; }
+.edit-table th { white-space: nowrap; }
+.edit-table td:nth-child(2) { min-width: 130px; }
+.edit-table td:nth-child(3) { min-width: 200px; }
+.edit-table td:nth-child(4) { min-width: 100px; }
+.edit-table td:nth-child(5) { min-width: 220px; }
+.edit-table td.flags { white-space: nowrap; }
+.edit-table td.flags label { display: inline-flex; flex-direction: row; align-items: center; gap: 3px; margin-right: 8px; font-size: 0.85rem; }
+.asset-pick { display: flex; gap: 4px; }
+button.icon { padding: 4px 9px; }
+button.link.danger-text { color: var(--bad); }
+.edit-start { padding: 8px 0; }
+.edit-issues { margin: 8px 0; padding-left: 18px; font-size: 0.9rem; }
+.edit-issues li.bad { color: var(--bad); }
+.edit-issues li.warn { color: var(--warn); }
+.edit-actions { margin-top: 10px; }
+.edit-actions .spacer { flex: 1; }
+
+/* 타종 붙여 새 음원 만들기 */
+.composer { border: 1px solid var(--primary); border-radius: 10px; padding: 12px 14px; margin-top: 12px; }
+.composer-head { display: flex; justify-content: space-between; align-items: center; }
+.composer-blocks { list-style: none; margin: 8px 0; padding: 0; }
+.composer-blocks li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 0; border-top: 1px solid var(--line); }
+.composer-blocks li > select { flex: 1; min-width: 220px; }
+.composer-no { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--line); font-weight: 700; font-size: 0.85rem; }
+.composer .spacer { flex: 1; }
+label.inline { display: inline-flex; flex-direction: row; align-items: center; gap: 4px; font-size: 0.9rem; }
+label.inline input[type='number'] { width: 64px; padding: 4px 6px; }
+label.inline select { padding: 4px 6px; }
+.composer-result { margin-top: 10px; }
+.composer-wave { display: block; width: 100%; height: 80px; border-radius: 6px; background: var(--bg); margin-bottom: 8px; }
+.composer-name { min-width: 220px; }
+
 /* 넓은 화면 2열 레이아웃 (기본 규칙을 덮어쓰도록 맨 끝에 둔다) */
 @media (min-width: 1200px) {
   .player { height: 100vh; display: flex; flex-direction: column; padding-bottom: 12px; overflow: hidden; }

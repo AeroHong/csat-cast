@@ -6,6 +6,7 @@
  * - 폴더 1~6의 같은 이름 파일은 내용이 같아야 하며, 고유 파일만 web/public/audio/builtin/<큐 id>.mp3 로 복사한다.
  * - 파일명(순번-시각-교시-내용)의 시각이 시간표(web/src/data/templates.ts)의 시각과 같은지 검사한다.
  * - 폴더 N의 파일 구성이 시간표 csat-N에 필요한 음원과 정확히 같은지 검사한다.
+ * - 폴더 7(참고 타종, 멜로디 없는 타종)은 ref-bell-*.mp3 로 복사한다. 학교가 직접 만든 멘트 앞뒤에 붙이는 용도.
  * 하나라도 어긋나면 아무것도 바꾸지 않고 종료한다.
  *
  * 음원 파일은 저장소(공개)에 올리지 않는다(.gitignore). 다른 PC에서는 음원 폴더를 복사한 뒤 이 스크립트를 다시 실행한다.
@@ -31,6 +32,14 @@ const BY_SEQ: Record<string, string> = {
   '28': 'p4-t1-start', '29': 'p4-t1-5min', '30': 'p4-t1-end', '31': 'p4-t2-5min',
   '32': 'p4-end-a', '33': 'p4-end-b', '34': 'p4-end-c',
   '35': 'p5-staff', '36': 'p5-prep', '37': 'p5-ready', '38': 'p5-start', '39': 'p5-10min', '40': 'p5-end',
+};
+/** 폴더 7 참고 타종: 파일 이름 → [음원 id, 라벨] */
+const REF_BELLS: Record<string, [string, string]> = {
+  '예비령.mp3': ['ref-bell-prep', '타종: 예비령'],
+  '준비령.mp3': ['ref-bell-ready', '타종: 준비령'],
+  '본령.mp3': ['ref-bell-start', '타종: 본령'],
+  '종료령.mp3': ['ref-bell-end', '타종: 종료령'],
+  '기타.mp3': ['ref-bell-etc', '타종: 기타'],
 };
 /** 원본 파일명 표기 오류 (07-100-1교시-종료령 = 10:00) */
 const TIME_TYPOS: Record<string, string> = { '100': '1000' };
@@ -85,6 +94,20 @@ for (const dir of folders) {
   if (extra.length) errors.push(`${dir}: 시간표 csat-${no}에 없는 음원 → ${extra.join(', ')}`);
 }
 
+const refDir = readdirSync(SRC).find((d) => /^7\./.test(d) && statSync(join(SRC, d)).isDirectory());
+const refBells: Found[] = [];
+if (!refDir) console.warn('참고 타종 폴더(7. …)가 없어 기본 타종은 건너뜁니다');
+else
+  for (const [name, [id]] of Object.entries(REF_BELLS)) {
+    const path = join(SRC, refDir, name);
+    if (!existsSync(path)) {
+      errors.push(`${refDir}/${name}: 참고 타종 파일 없음`);
+      continue;
+    }
+    const buf = readFileSync(path);
+    refBells.push({ id, path, hash: createHash('sha256').update(buf).digest('hex'), size: buf.length, name });
+  }
+
 if (errors.length) {
   console.error('음원 가져오기 중단 (아무것도 바꾸지 않음):\n- ' + errors.join('\n- '));
   process.exit(1);
@@ -98,6 +121,12 @@ for (const f of [...unique.values()].sort((a, b) => a.name.localeCompare(b.name)
   manifest[f.id] = { file, label: label.get(f.id)!, source: f.name, sha256: f.hash };
   total += f.size;
 }
+for (const f of refBells) {
+  const file = `${f.id}.mp3`;
+  copyFileSync(f.path, join(OUT, file));
+  manifest[f.id] = { file, label: REF_BELLS[f.name][1], source: `${refDir}/${f.name}`, sha256: f.hash };
+  total += f.size;
+}
 writeFileSync(join(OUT, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
-console.log(`음원 ${unique.size}개 (${(total / 1e6).toFixed(0)}MB) → web/public/audio/builtin/, manifest.json 갱신`);
+console.log(`음원 ${unique.size}개 + 참고 타종 ${refBells.length}개 (${(total / 1e6).toFixed(0)}MB) → web/public/audio/builtin/, manifest.json 갱신`);
 console.log('폴더 1~6 구성·시각이 시간표 csat-1~6과 모두 일치합니다.');

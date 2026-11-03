@@ -2,7 +2,7 @@ import { getDownloadURL, ref } from 'firebase/storage';
 import { fb } from './firebase';
 import type { Asset } from './types';
 
-const AUDIO_CACHE = 'csat-audio-v1';
+export const AUDIO_CACHE = 'csat-audio-v1';
 
 export interface LoadResult {
   loaded: string[];
@@ -312,7 +312,7 @@ export class AudioEngine {
 const PEAK_BUCKETS = 800;
 
 /** 파형 표시용: 전체를 n구간으로 나눠 구간별 최대 진폭(모든 채널 중 큰 값)을 구한다 */
-function computePeaks(buf: AudioBuffer, n: number): Float32Array {
+export function computePeaks(buf: AudioBuffer, n: number): Float32Array {
   const peaks = new Float32Array(n);
   const size = Math.max(1, Math.floor(buf.length / n));
   for (let ch = 0; ch < buf.numberOfChannels; ch++) {
@@ -344,6 +344,12 @@ async function fetchWithCache(asset: Asset, cache: Cache | null): Promise<ArrayB
     /* 캐시 저장 실패(브라우저 저장소 오류 등): 오프라인 대비만 안 될 뿐 이번 재생에는 지장 없음 */
   }
   return res.arrayBuffer();
+}
+
+/** 음원 원본 내려받기 (재생 엔진과 같은 캐시 사용). 음원 합치기 편집기에서 쓴다 */
+export async function fetchAssetBytes(asset: Asset): Promise<ArrayBuffer> {
+  const cache = 'caches' in globalThis ? await caches.open(AUDIO_CACHE).catch(() => null) : null;
+  return fetchWithCache(asset, cache);
 }
 
 export const audioEngine = new AudioEngine();

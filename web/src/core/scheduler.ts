@@ -39,8 +39,10 @@ export function kstTime(epochMs: number): string {
   return new Date(epochMs + KST_OFFSET_MS).toISOString().slice(11, 19);
 }
 
-/** 템플릿 + 학교 설정 → 실제 재생할 큐 목록 (시각 순) */
-export function resolveCues(template: Template, channel?: ChannelConfig): Cue[] {
+/** 템플릿 + 학교 설정 → 실제 재생할 큐 목록 (시각 순). 학교 자체 시간표가 있으면 그것만 쓴다 */
+export function resolveCues(template: Template | undefined, channel?: ChannelConfig): Cue[] {
+  if (channel?.customCues) return channel.customCues.map((c) => ({ ...c, official: false })).sort((a, b) => a.time.localeCompare(b.time));
+  if (!template) return [];
   const disabled = new Set(channel?.disabledCueIds ?? []);
   const cues = template.cues.filter((c) => !disabled.has(c.id));
   for (const extra of channel?.extraCues ?? []) cues.push({ ...extra, official: false });

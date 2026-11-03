@@ -41,13 +41,23 @@ Firebase 설정(`web/.env`, `.env.example` 참고)이 없으면 서버 보고 �
 - 16:05 종료령 파일에는 16:07 두 번째 본령(파일 120초 지점)이 함께 들어 있다. 앞을 잘라 내지 않고, 늦어도 10분까지는 처음부터 끝까지 틀며(늦은 만큼 16:32·16:37도 늦춤), 재생 중 끊기면 처음부터 다시 튼다.
 - 연장 시험실(1.5배/1.7배 등) 시간표는 대본에 없어 따로 등록해야 한다.
 
+## 학교 자체 시간표 (경증 시각장애 시험장 등)
+평가원 음원·시간표가 맞지 않는 시험장(운영 시간·안내 내용이 다른 경증 시각장애 시험장 등)은 학교 플레이어의 **[시간표 편집]** 탭에서 직접 만든다.
+- 음원 올리기: mp3·wav, 20MB 이하. 올리기 전에 재생 가능 여부를 검사하고 길이를 기록한다. Storage `schools/{코드}/assets/` + Firestore `schools/{코드}/assets/{id}` (id는 내용 해시라 같은 파일은 한 번만 저장).
+- 시간표: 평가원 시간표를 복사하거나 빈 시간표에서 시작해 방송마다 시각·교시·내용·종류·음원(학교 음원/평가원 음원)·시험 시작/종료를 정한다. [저장]해야 방송에 반영되고, 저장하면 채널 설정 `customCues`로 평가원 유형 대신 이 시간표만 방송한다. [평가원 시간표로 되돌리기]로 해제.
+- 저장 전 검사: 시각 형식, 내용·음원 누락, 삭제된 음원(저장 불가) / 같은 시각 겹침, 종료 없는 시험 시작(확인 요청).
+- 자동 방송 중에는 편집·미리 듣기 불가. 시간표에서 쓰는 음원은 삭제 불가.
+- `seed.ts schools`로 학교를 다시 등록해도 `customCues`는 유지된다.
+- 로컬 모드는 이 PC(localStorage·브라우저 캐시)에만 저장된다.
+- **타종 붙여 새 음원 만들기**: TTS(클로바더빙 등)로 만든 멘트 앞뒤에 타종을 붙인다. 블록(평가원 참고 타종 5개 / 학교 음원 / 내 PC 파일)을 순서대로 놓고 블록 사이 간격·음량만 정하면, 앞뒤 무음 자르기와 음량 자동 맞추기를 거쳐 모노 32kHz WAV(1분 약 3.8MB)로 합쳐 학교 음원으로 저장한다 (`web/src/core/audioMix.ts`, `pages/AudioComposer.tsx`).
+
 ## 음원 (평가원 안내방송 음원)
 음원은 공개 저장소·Hosting에 올리지 않고 **Firebase Storage**(`builtin/audio/`, 로그인한 시험장만 읽기)에서 받는다. 로컬 모드는 개발 PC의 `web/public/audio/builtin` 음원을 쓴다. 평가원 음원 폴더(`타종 타입/1. …` ~ `6. …`)를 저장소 루트에 두고:
 ```
 node scripts/import-audio.ts        # 또는 node scripts/import-audio.ts <폴더 경로>
 ```
 - 폴더 간 같은 파일의 내용 일치, 파일명 시각 = 시간표 시각, 폴더 N 구성 = 시간표 csat-N 을 검사하고, 하나라도 어긋나면 아무것도 바꾸지 않는다.
-- 고유 음원 40개(약 115MB)를 `web/public/audio/builtin/<큐 id>.mp3`로 복사하고 `manifest.json`(커밋 대상)을 갱신한다.
+- 고유 음원 40개와 폴더 `7. (참고) 타종`의 멜로디 없는 타종 5개(`ref-bell-*`, 학교 음원 만들기용)를 합쳐 약 115MB를 `web/public/audio/builtin/<큐 id>.mp3`로 복사하고 `manifest.json`(커밋 대상)을 갱신한다.
 - `set GOOGLE_APPLICATION_CREDENTIALS=service-account.json` 후 `node scripts/upload-audio.ts` → Storage에 업로드(바뀐 파일만, 버킷 CORS 설정 포함). Storage 규칙은 `firebase deploy --only storage`로 배포.
 - Hosting 배포에서는 mp3를 제외한다(`firebase.json` ignore).
 - 음원이 바뀌면 manifest의 해시로 학교 PC 캐시가 자동 갱신된다.
@@ -93,5 +103,6 @@ npx firebase-tools login      # 배포할 때만
 - [ ] 연장 시험실 시간표 등록 (시험장 시나리오·대본 확인 후 별도 작업)
 - [x] `node scripts/seed.ts templates`로 csat-1~6 등록(초안 general-4/5 삭제), 테스트 학교 9999999 → csat-2, 음원 Storage 업로드 (2026-10-30)
 - [ ] 시험장 목록 CSV로 학교 계정 일괄 생성
-- [ ] 학교별 시간표 조정 화면(큐 끄기/켜기, 자체 mp3 업로드), 관리자 관리 화면, 학교×교시 송출 표
+- [x] 학교 자체 시간표 편집·음원 업로드 (2026-11-03, 경증 시각장애 시험장용)
+- [ ] 관리자 관리 화면(학교 시간표 확인 포함), 학교×교시 송출 표
 - [ ] 수능 주간 Functions `MIN_INSTANCES=1` 재배포

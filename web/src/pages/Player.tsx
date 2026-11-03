@@ -19,6 +19,7 @@ import { onUpdatePending } from '../core/updates';
 import { useSession } from '../session';
 import NowPlayingDetail, { formatDuration, useNowPlaying } from './NowPlaying';
 import RehearsalScheduler, { shortDate } from './RehearsalScheduler';
+import ScheduleEditor from './ScheduleEditor';
 
 const RESYNC_MS = 10 * 60_000;
 
@@ -62,14 +63,16 @@ export default function Player() {
   const [duplicateTab, setDuplicateTab] = useState(false);
   /** 이 PC에 예약된 리허설 (학교·채널별) */
   const [rehearsals, setRehearsals] = useState<ScheduledRehearsal[]>([]);
-  /** 화면 탭: 실전 방송 / 테스트·리허설 */
-  const [tab, setTab] = useState<'live' | 'test'>('live');
+  /** 화면 탭: 실전 방송 / 테스트·리허설 / 시간표 편집 */
+  const [tab, setTab] = useState<'live' | 'test' | 'edit'>('live');
   const reporterRef = useRef<Reporter | null>(null);
 
   const channelId = params.get('channel') ?? profile?.channels[0]?.id ?? 'main';
   const channel = profile?.channels.find((c) => c.id === channelId) ?? profile?.channels[0];
   const template = templates.find((t) => t.id === channel?.templateId);
-  const cues = useMemo(() => (template ? resolveCues(template, channel) : []), [template, channel]);
+  /** 학교가 직접 만든 시간표로 방송하는가 (평가원 유형 대신) */
+  const custom = !!channel?.customCues;
+  const cues = useMemo(() => resolveCues(template, channel), [template, channel]);
 
   const today = kstDate(now);
   const nowPlaying = useNowPlaying();
@@ -210,7 +213,8 @@ export default function Player() {
       ctrl.abort();
       if (held) setDuplicateTab(false);
     };
-  }, [neisCode, channel]);
+    // 채널 설정 내용이 바뀌어도(시간표 저장 등) 잠금을 다시 잡지 않는다: 놓았다 다시 잡는 사이 "다른 탭에서 열림"으로 잠깐 바뀐다
+  }, [neisCode, channel?.id]);
 
   // 5) 서버 보고 (채널별 실시간 상태)
   useEffect(() => {
@@ -224,7 +228,8 @@ export default function Player() {
       r.stop();
       if (player.reporter === r) player.reporter = null;
     };
-  }, [neisCode, profile, channel]);
+    // 채널 설정 내용(시간표 저장 등)이 바뀔 때마다 보고를 다시 시작하지 않도록 채널 id 기준
+  }, [neisCode, !!profile, channel?.id]);
 
   // 6) 스피커 확인 결과는 오늘 하루 동안 기억
   useEffect(() => {
@@ -562,7 +567,7 @@ export default function Player() {
           ) : (
             <span className="muted"> · {channel?.label}</span>
           )}
-          <span className="muted"> · {template?.name}</span>
+          <span className="muted"> · {custom ? '학교 시간표' : template?.name}</span>
         </div>
         <nav className="tabs" role="tablist" aria-label="화면 선택">
           <button role="tab" aria-selected={tab === 'live'} className={tab === 'live' ? 'active' : ''} onClick={() => setTab('live')}>
@@ -576,6 +581,10 @@ export default function Player() {
             ) : (
               upcomingRehearsals > 0 && <span className="tag">예약 {upcomingRehearsals}</span>
             )}
+          </button>
+          <button role="tab" aria-selected={tab === 'edit'} className={tab === 'edit' ? 'active' : ''} onClick={() => setTab('edit')}>
+            시간표 편집
+            {custom && <span className="tag">학교 시간표</span>}
           </button>
         </nav>
         <div className="bar-right">
@@ -594,14 +603,14 @@ export default function Player() {
             {headline.detail && <div>{headline.detail}</div>}
           </div>
 
-          {channel && templates.length > 0 && !template && (
+          {channel && templates.length > 0 && !template && !custom && (
             <div className="banner bad">
               ⛔ 이 시험장에 지정된 시간표({channel.templateId})를 찾을 수 없어 자동 방송을 할 수 없습니다. 교육지원청에 시험장
               유형(안내방송 유형 1~6) 설정을 요청하세요.
               {session.localMode && ' 로컬 모드라면 로그아웃 후 시험장 상황을 다시 골라 시작하세요.'}
             </div>
           )}
-          {template && !template.verified && (
+          {template && !custom && !template.verified && (
             <div className="banner warn">⚠ 이 시간표는 아직 공식 시간표로 검증되지 않은 초안입니다.</div>
           )}
           {updatePending && (
@@ -789,98 +798,112 @@ export default function Player() {
         </div>
 
         <div className="col-main">
-          <section className="card timetable-card">
-            <div className="timetable-head">
-              <h2>오늘 시간표</h2>
-              <span className="muted small">자동 방송이 안 나갔을 때는 해당 줄의 [지금 재생]을 누르면 즉시 송출됩니다.</span>
-            </div>
-            <div className="table-scroll" ref={tableScrollRef}>
-              <table className="timeline">
-                <thead>
-                  <tr>
-                    <th>시각</th>
-                    <th>교시</th>
-                    <th>내용</th>
-                    <th title="음원 길이 (실제 시간표에서 끝나는 시각)">길이</th>
-                    <th>상태</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {(snap.plan.length ? snap.plan : buildPlan(cues, today)).map(({ cue, at }) => {
-                    const st = snap.states[cue.id] ?? 'pending';
-                    // 실제로 소리가 나고 있는지는 오디오 엔진 기준 (수동 재생은 자동 송출 상태와 별개라 따로 확인)
-                    const sounding = nowPlaying.find((p) => p.assetId === cue.assetId);
-                    return (
-                      <Fragment key={cue.id}>
-                        <tr
-                          data-cue={cue.id}
-                          className={`st-${sounding ? 'playing' : st} ${next?.cue.id === cue.id ? 'is-next' : ''}`}
-                        >
-                          <td className="mono">
-                            {kstTime(at)}
-                            {snap.delays[cue.id] && (
-                              <span className="tag delay" title="본령이 늦게 울려 시험 시간을 보장하려고 늦춘 시각">
-                                +{formatDuration(snap.delays[cue.id] / 1000)}
-                              </span>
-                            )}
-                          </td>
-                          <td>{cue.period}</td>
-                          <td>
-                            {cue.kind === 'bell' ? '🔔 ' : '📢 '}
-                            {cue.label}
-                            {!cue.official && <span className="tag">학교 추가</span>}
-                          </td>
-                          <DurationCell ms={audioEngine.durationMs(cue.assetId)} slot={realSlots.get(cue.id)} />
-                          <td>
-                            {sounding ? (
-                              <span className="mono">
-                                ▶ 재생 중 {formatDuration(sounding.positionSec)} / {formatDuration(sounding.durationSec)}
-                              </span>
-                            ) : snap.plan.length ? (
-                              STATE_LABEL[st]
-                            ) : (
-                              ''
-                            )}
-                          </td>
-                          <td>
-                            {sounding ? (
-                              <button className="small danger" onClick={() => audioEngine.stopAsset(cue.assetId)} title="이 음원 재생 정지">
-                                ■ 정지
-                              </button>
-                            ) : (
-                              <button
-                                className="small"
-                                disabled={!audioEngine.has(cue.assetId)}
-                                onClick={async () => {
-                                  await unlockAudio();
-                                  if (snap.plan.length) await player.playNow(cue.id);
-                                  else {
-                                    const h = await audioEngine.playNow(cue.assetId).catch(() => null);
-                                    void h?.ended.then(() => audioEngine.release(cue.assetId));
-                                  }
-                                }}
-                                title="이 방송을 지금 즉시 재생"
-                              >
-                                ▶ 지금 재생
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                        {sounding && (
-                          <tr className="np-row">
-                            <td colSpan={6}>
-                              <NowPlayingDetail p={sounding} />
+          {tab === 'edit' && channel ? (
+            <ScheduleEditor
+              key={channel.id}
+              neisCode={neisCode}
+              profile={profile}
+              channel={channel}
+              template={template}
+              assets={assets}
+              locked={snap.armed}
+              onProfile={setProfile}
+              onAssets={setAssets}
+            />
+          ) : (
+            <section className="card timetable-card">
+              <div className="timetable-head">
+                <h2>오늘 시간표</h2>
+                <span className="muted small">자동 방송이 안 나갔을 때는 해당 줄의 [지금 재생]을 누르면 즉시 송출됩니다.</span>
+              </div>
+              <div className="table-scroll" ref={tableScrollRef}>
+                <table className="timeline">
+                  <thead>
+                    <tr>
+                      <th>시각</th>
+                      <th>교시</th>
+                      <th>내용</th>
+                      <th title="음원 길이 (실제 시간표에서 끝나는 시각)">길이</th>
+                      <th>상태</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(snap.plan.length ? snap.plan : buildPlan(cues, today)).map(({ cue, at }) => {
+                      const st = snap.states[cue.id] ?? 'pending';
+                      // 실제로 소리가 나고 있는지는 오디오 엔진 기준 (수동 재생은 자동 송출 상태와 별개라 따로 확인)
+                      const sounding = nowPlaying.find((p) => p.assetId === cue.assetId);
+                      return (
+                        <Fragment key={cue.id}>
+                          <tr
+                            data-cue={cue.id}
+                            className={`st-${sounding ? 'playing' : st} ${next?.cue.id === cue.id ? 'is-next' : ''}`}
+                          >
+                            <td className="mono">
+                              {kstTime(at)}
+                              {snap.delays[cue.id] && (
+                                <span className="tag delay" title="본령이 늦게 울려 시험 시간을 보장하려고 늦춘 시각">
+                                  +{formatDuration(snap.delays[cue.id] / 1000)}
+                                </span>
+                              )}
+                            </td>
+                            <td>{cue.period}</td>
+                            <td>
+                              {cue.kind === 'bell' ? '🔔 ' : '📢 '}
+                              {cue.label}
+                              {!cue.official && !custom && <span className="tag">학교 추가</span>}
+                            </td>
+                            <DurationCell ms={audioEngine.durationMs(cue.assetId)} slot={realSlots.get(cue.id)} />
+                            <td>
+                              {sounding ? (
+                                <span className="mono">
+                                  ▶ 재생 중 {formatDuration(sounding.positionSec)} / {formatDuration(sounding.durationSec)}
+                                </span>
+                              ) : snap.plan.length ? (
+                                STATE_LABEL[st]
+                              ) : (
+                                ''
+                              )}
+                            </td>
+                            <td>
+                              {sounding ? (
+                                <button className="small danger" onClick={() => audioEngine.stopAsset(cue.assetId)} title="이 음원 재생 정지">
+                                  ■ 정지
+                                </button>
+                              ) : (
+                                <button
+                                  className="small"
+                                  disabled={!audioEngine.has(cue.assetId)}
+                                  onClick={async () => {
+                                    await unlockAudio();
+                                    if (snap.plan.length) await player.playNow(cue.id);
+                                    else {
+                                      const h = await audioEngine.playNow(cue.assetId).catch(() => null);
+                                      void h?.ended.then(() => audioEngine.release(cue.assetId));
+                                    }
+                                  }}
+                                  title="이 방송을 지금 즉시 재생"
+                                >
+                                  ▶ 지금 재생
+                                </button>
+                              )}
                             </td>
                           </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </section>
+                          {sounding && (
+                            <tr className="np-row">
+                              <td colSpan={6}>
+                                <NowPlayingDetail p={sounding} />
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
         </div>
       </div>
     </div>

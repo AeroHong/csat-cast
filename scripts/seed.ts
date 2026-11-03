@@ -72,6 +72,12 @@ async function seedSchools(path: string) {
       await auth.createUser({ email, password, displayName: r.name });
     }
     const ext = (r.extRooms ?? '').split('|').filter(Boolean);
+    // 학교가 직접 만든 시간표(customCues)는 다시 등록해도 지우지 않는다
+    const prev = ((await db.doc(`schools/${code}`).get()).data()?.channels ?? []) as { id: string; customCues?: unknown }[];
+    const keep = (id: string) => {
+      const custom = prev.find((c) => c.id === id)?.customCues;
+      return custom ? { customCues: custom } : {};
+    };
     await db.doc(`schools/${code}`).set(
       {
         name: r.name,
@@ -81,8 +87,8 @@ async function seedSchools(path: string) {
         lastPeriod: FieldValue.delete(),
         inquiryNote: r.inquiryNote ?? '',
         channels: [
-          { id: 'main', label: '전체 방송', templateId: csatTemplateId(inquiry, end) },
-          ...ext.map((x) => ({ id: `ext-${x}`, label: `연장 시험실 ${x}`, templateId: `ext-${x}` })),
+          { id: 'main', label: '전체 방송', templateId: csatTemplateId(inquiry, end), ...keep('main') },
+          ...ext.map((x) => ({ id: `ext-${x}`, label: `연장 시험실 ${x}`, templateId: `ext-${x}`, ...keep(`ext-${x}`) })),
         ],
       },
       { merge: true },

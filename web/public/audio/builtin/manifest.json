@@ -238,5 +238,35 @@
     "label": "5교시 제2외국어/한문 종료령 (시험 종료)",
     "source": "40-1745-5교시-종료령.mp3",
     "sha256": "16e58e550a7b0e3b1b4468232740dab6660d79220c764cbdd6d5e6eeffe2b425"
+  },
+  "ref-bell-prep": {
+    "file": "ref-bell-prep.mp3",
+    "label": "타종: 예비령",
+    "source": "7. (참고) 타종/예비령.mp3",
+    "sha256": "fd13c4289bec1504e1f2c0723d2a05db98a218c4700fecea546c5f3f2aeec052"
+  },
+  "ref-bell-ready": {
+    "file": "ref-bell-ready.mp3",
+    "label": "타종: 준비령",
+    "source": "7. (참고) 타종/준비령.mp3",
+    "sha256": "594f5b187d1ed52255366f7e2222ff51642e1aa21777713de51c2685d4bc6612"
+  },
+  "ref-bell-start": {
+    "file": "ref-bell-start.mp3",
+    "label": "타종: 본령",
+    "source": "7. (참고) 타종/본령.mp3",
+    "sha256": "94c98b375ba058167f3e653def25ba2770d22c71149edd7bf531d435b1bffe4c"
+  },
+  "ref-bell-end": {
+    "file": "ref-bell-end.mp3",
+    "label": "타종: 종료령",
+    "source": "7. (참고) 타종/종료령.mp3",
+    "sha256": "96cfbf3b1df4c215cc384b1b4f031c324bac17e7c2ee769361a955e3d6ec5d7b"
+  },
+  "ref-bell-etc": {
+    "file": "ref-bell-etc.mp3",
+    "label": "타종: 기타",
+    "source": "7. (참고) 타종/기타.mp3",
+    "sha256": "027fb953a21527ecf71d79ef6bf183cc9f98384c6df388ea1d8d23f1361a3d56"
   }
 }

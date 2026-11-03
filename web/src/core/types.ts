@@ -57,6 +57,11 @@ export interface ChannelConfig {
   disabledCueIds?: string[];
   /** 학교에서 추가한 큐 */
   extraCues?: Cue[];
+  /**
+   * 학교 자체 시간표. 있으면 평가원 유형(templateId) 대신 이것만 방송한다.
+   * 평가원 음원·시간표가 맞지 않는 시험장(경증 시각장애 시험장 등)이 직접 만든다.
+   */
+  customCues?: Cue[];
 }
 
 /** 4교시 탐구: 1과목·2과목 선택자를 시험실별로 나눔(split) / 한 시험실에 섞임(mixed) */

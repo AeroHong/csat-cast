@@ -1,6 +1,6 @@
 import type { Cue, Template } from './types';
 
-const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+export const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 
 /**
  * 서버에서 받은 시간표가 올바른지 검사한다. 문제 목록을 반환 (빈 배열이면 정상).

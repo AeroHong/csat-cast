@@ -1,6 +1,7 @@
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { BUILTIN_TEMPLATES, DEFAULT_GLOBAL_CONFIG, csatSituation, csatTemplateId } from '../data/templates';
 import { fb } from './firebase';
+import { loadLocalAssetDocs, toSchoolAsset, type SchoolAssetDoc } from './schoolSchedule';
 import type { Asset, GlobalConfig, SchoolProfile, Template } from './types';
 import { validateTemplate } from './validate';
 
@@ -86,11 +87,17 @@ export async function loadSchool(neisCode: string): Promise<SchoolProfile> {
   return loadLocalProfile();
 }
 
+/** 학교가 직접 올린 음원 (로컬 모드는 이 PC에 저장한 음원) */
 export async function loadSchoolAssets(neisCode: string): Promise<Asset[]> {
-  if (!fb || neisCode === 'LOCAL') return [];
+  return (await loadSchoolAssetDocs(neisCode)).map(([id, d]) => toSchoolAsset(neisCode, id, d));
+}
+
+export async function loadSchoolAssetDocs(neisCode: string): Promise<[string, SchoolAssetDoc][]> {
+  if (neisCode === 'LOCAL') return Object.entries(loadLocalAssetDocs());
+  if (!fb) return [];
   try {
     const snap = await getDocs(collection(fb.db, 'schools', neisCode, 'assets'));
-    return snap.docs.map((d) => ({ ...(d.data() as Asset), id: d.id }));
+    return snap.docs.map((d) => [d.id, d.data() as SchoolAssetDoc]);
   } catch {
     return [];
   }
