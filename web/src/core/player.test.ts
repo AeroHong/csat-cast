@@ -372,3 +372,92 @@ describe('관리자 화면 보고용 기록 (실제 시작 시각·수동 송출
     expect(player.snapshot().plan.find((p) => p.cue.id === 'end')!.at).toBe(120_000);
   });
 });
+
+describe('담당자가 시험 종료를 늦춘다 (영어 듣기평가가 늦게 시작된 경우 등)', () => {
+  const at = (id: string) => player.snapshot().plan.find((p) => p.cue.id === id)!.at;
+
+  it('본령 타종이 없는 시험(영어): 남은 종료 10분 전·종료령만 늦추고 다음 교시는 그대로', async () => {
+    const eng: PlannedCue[] = [
+      { cue: cue('ready', 'ment'), at: 0 }, // 준비령 → 듣기평가로 이어짐 (본령 타종 없음)
+      { cue: cue('10min', 'ment'), at: 60_000 },
+      { cue: { ...cue('end', 'bell'), examEnd: true }, at: 120_000 },
+      { cue: cue('next', 'ment'), at: 400_000 },
+    ];
+    player.arm(eng, 'test');
+    tick();
+    audio.endAll();
+    await flush();
+    expect(player.currentExam()!.end.cue.id).toBe('end');
+    expect(player.delayExam('end', 120_000)).toBe(240_000);
+    expect([at('ready'), at('10min'), at('end'), at('next')]).toEqual([0, 180_000, 240_000, 400_000]);
+    expect(player.snapshot().examDelays.end.ms).toBe(120_000);
+    expect(player.snapshot().events[0].message).toContain('2분 늦춤');
+    // 원래 시각(120초)에는 종료령이 나가지 않는다
+    clock.t = 125_000;
+    tick();
+    expect(audio.played.map((p) => p.assetId)).not.toContain('end');
+  });
+
+  it('여러 번 누르면 더해지고, 되돌리면 원래 시각으로', () => {
+    const exam: PlannedCue[] = [
+      { cue: cue('10min', 'ment'), at: 60_000 },
+      { cue: { ...cue('end', 'bell'), examEnd: true }, at: 120_000 },
+    ];
+    player.arm(exam, 'test');
+    player.delayExam('end', 60_000);
+    player.delayExam('end', 30_000);
+    expect(at('end')).toBe(210_000);
+    player.delayExam('end', -90_000);
+    expect(at('end')).toBe(120_000);
+    expect(player.snapshot().examDelays).toEqual({});
+  });
+
+  it('본령 전에 늦추면 본령도 늦게 울리고, 그 때문에 종료령을 한 번 더 늦추지는 않는다', () => {
+    const exam: PlannedCue[] = [
+      { cue: { ...cue('start', 'bell'), examStart: true }, at: 10_000 },
+      { cue: cue('5min', 'ment'), at: 60_000 },
+      { cue: { ...cue('end', 'bell'), examEnd: true }, at: 120_000 },
+    ];
+    player.arm(exam, 'test');
+    player.delayExam('end', 60_000);
+    expect([at('start'), at('5min'), at('end')]).toEqual([70_000, 120_000, 180_000]);
+    clock.t = 70_000;
+    tick(); // 늦춘 시각에 제대로 울림
+    expect(audio.played.at(-1)).toEqual({ assetId: 'start', at: 70_000 });
+    expect(at('end')).toBe(180_000);
+  });
+
+  it('합본(첫 번째 종료 + 두 번째 시작)까지 늦추면 두 번째 시험도 같이 늦춘다', () => {
+    const two: PlannedCue[] = [
+      { cue: cue('t1-5min', 'ment'), at: 60_000 },
+      { cue: { ...cue('combo', 'bell'), examEnd: true, examStart: true, lateToleranceSec: 600 }, at: 100_000 },
+      { cue: cue('t2-5min', 'ment'), at: 200_000 },
+      { cue: { ...cue('end', 'bell'), examEnd: true }, at: 300_000 },
+    ];
+    player.arm(two, 'test');
+    player.delayExam('combo', 30_000);
+    expect([at('t1-5min'), at('combo'), at('t2-5min'), at('end')]).toEqual([90_000, 130_000, 230_000, 330_000]);
+  });
+
+  it('이미 나간 종료령의 시험은 늦출 수 없고, 다음 시험이 대상이 된다', async () => {
+    const exam: PlannedCue[] = [
+      { cue: { ...cue('end1', 'bell'), examEnd: true }, at: 0 },
+      { cue: { ...cue('end2', 'bell'), examEnd: true }, at: 100_000 },
+    ];
+    player.arm(exam, 'test');
+    tick();
+    audio.endAll();
+    await flush();
+    expect(player.delayExam('end1', 60_000)).toBeNull();
+    expect(player.currentExam()!.end.cue.id).toBe('end2');
+  });
+
+  it('새로고침(이어하기)해도 늦춘 시각을 이어받는다', () => {
+    const exam: PlannedCue[] = [
+      { cue: cue('10min', 'ment'), at: 60_000 },
+      { cue: { ...cue('end', 'bell'), examEnd: true }, at: 120_000 },
+    ];
+    player.arm(exam, 'test', { examDelays: { end: { ms: 60_000, fromAt: 60_000 } } });
+    expect([at('10min'), at('end')]).toEqual([120_000, 180_000]);
+  });
+});

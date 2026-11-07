@@ -363,7 +363,7 @@ export default function Player() {
     // 방송일 화면에서는 리허설을 시작할 수 없으므로, 돌고 있는 리허설은 전날 켜 둔 것 → 실제 방송으로 교체
     const saved = loadRun(neisCode, channel.id, today, planKey);
     runKeyRef.current = planKey;
-    player.arm(todayPlan(), armedToday.mode, { restore: saved?.states, starts: saved?.starts, date: today });
+    player.arm(todayPlan(), armedToday.mode, { restore: saved?.states, starts: saved?.starts, examDelays: saved?.examDelays, date: today });
   }, [armedToday?.date, armedToday?.label, channel, loaded, cues, duplicateTab, runningToday, stoppedToday, neisCode, today]);
 
   // 이 PC에 저장된 리허설 예약 불러오기
@@ -384,6 +384,7 @@ export default function Player() {
       mode: snap.mode,
       states: snap.states,
       starts: snap.starts,
+      examDelays: snap.examDelays,
       stoppedByUser: false,
       savedAt: Date.now(),
       planKey: runKeyRef.current ?? (snap.runDate === today ? planKey : undefined),
@@ -590,7 +591,7 @@ export default function Player() {
     if (!armedToday || !channel) return;
     void unlockAudio();
     runKeyRef.current = planKey;
-    player.arm(todayPlan(), armedToday.mode, { restore: savedRun?.states, starts: savedRun?.starts, date: today });
+    player.arm(todayPlan(), armedToday.mode, { restore: savedRun?.states, starts: savedRun?.starts, examDelays: savedRun?.examDelays, date: today });
   }
 
   function stopAuto() {
@@ -604,6 +605,7 @@ export default function Player() {
         mode: snap.mode === 'idle' ? 'test' : snap.mode,
         states: snap.states,
         starts: snap.starts,
+        examDelays: snap.examDelays,
         stoppedByUser: true,
         savedAt: Date.now(),
         planKey: runKeyRef.current ?? (snap.runDate === today ? planKey : undefined),
@@ -672,6 +674,7 @@ export default function Player() {
         </button>
         <button onClick={stopAuto}>자동 방송 중지</button>
       </div>
+      <ExamDelayControl />
     </>
   );
 
@@ -1294,5 +1297,62 @@ function stableJson(v: unknown): string {
     x && typeof x === 'object' && !Array.isArray(x)
       ? Object.fromEntries(Object.entries(x as Record<string, unknown>).filter(([, y]) => y !== undefined).sort(([a], [b]) => a.localeCompare(b)))
       : x,
+  );
+}
+
+/**
+ * 이번 시험 종료 늦추기: 영어 듣기평가나 본령이 늦게 시작되어 시험 시간을 보장해야 할 때.
+ * 진행 중(또는 다음) 시험의 남은 방송(종료 n분 전·종료령)만 늦추고 다음 교시는 원래 시각대로.
+ */
+function ExamDelayControl() {
+  const [custom, setCustom] = useState('');
+  const cur = player.currentExam();
+  if (!cur) return null;
+  const { end, remaining, delayMs } = cur;
+  const add = (ms: number) => player.delayExam(end.cue.id, ms);
+  const fmt = (ms: number) => {
+    const s = Math.round(ms / 1000);
+    return s % 60 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${s / 60}분`;
+  };
+  return (
+    <div className="exam-delay">
+      <h3>이번 시험 종료 늦추기</h3>
+      <p className="muted small">
+        영어 듣기평가나 본령이 늦게 시작되어 시험 시간을 보장해야 할 때 씁니다. 이 시험의 남은 방송만 늦추고, 다음 교시는 원래
+        시각대로 진행합니다.
+      </p>
+      <div className="exam-delay-target">
+        <strong>{end.cue.period}</strong> 종료령 <span className="mono big-time">{kstTime(end.at)}</span>
+        {delayMs > 0 && (
+          <span className="tag delay">
+            원래 {kstTime(end.at - delayMs)} → {fmt(delayMs)} 늦춤
+          </span>
+        )}
+        <div className="muted small">늦춰지는 방송: {remaining.map((p) => p.cue.label).join(', ')}</div>
+      </div>
+      <div className="row">
+        <button onClick={() => add(30_000)}>+30초</button>
+        <button onClick={() => add(60_000)}>+1분</button>
+        <button onClick={() => add(5 * 60_000)}>+5분</button>
+        <label className="inline">
+          <input type="number" min={0} max={60} step={0.5} value={custom} placeholder="분" onChange={(e) => setCustom(e.target.value)} />
+          분
+        </label>
+        <button
+          disabled={!(Number(custom) > 0)}
+          onClick={() => {
+            add(Math.round(Number(custom) * 60_000));
+            setCustom('');
+          }}
+        >
+          늦추기
+        </button>
+        {delayMs > 0 && (
+          <button className="link" onClick={() => add(-delayMs)}>
+            되돌리기
+          </button>
+        )}
+      </div>
+    </div>
   );
 }

@@ -2,7 +2,7 @@ import { audioEngine, type AudioEngine, type PlayHandle } from './audio';
 import { serverClock, type ServerClock } from './clock';
 import type { Reporter } from './reporter';
 import { restoreStates } from './runStore';
-import { applyExamDelays, decide, nextPending, type CueState, type PlannedCue } from './scheduler';
+import { applyExamDelays, decide, nextPending, type CueState, type ManualDelay, type PlannedCue } from './scheduler';
 import { startTicker } from './ticker';
 import type { RunMode } from './types';
 
@@ -20,8 +20,10 @@ export interface PlayerSnapshot {
   states: Record<string, CueState>;
   /** 본령이 실제로 울린 시각 (이어하기 저장용) */
   starts: Record<string, number>;
-  /** 본령이 늦어 늦춘 시간(ms). 늦춘 큐만 들어 있다 */
+  /** 본령이 늦어 늦춘 시간(ms). 늦춘 큐만 들어 있다 (담당자가 직접 늦춘 시간 포함) */
   delays: Record<string, number>;
+  /** 담당자가 직접 늦춘 시험 (종료령 큐 id → 늦춘 시간). 이어하기 저장용 */
+  examDelays: Record<string, ManualDelay>;
   /** 큐별로 실제 소리가 시작된(시작될) 시각 — 관리자 화면의 송출 오차 */
   startedAt: Record<string, number>;
   /** 담당자가 [지금 재생]으로 직접 내보낸 큐 */
@@ -57,6 +59,7 @@ export class PlayerController {
   private plan: PlannedCue[] = [];
   private delays: Record<string, number> = {};
   private starts: Record<string, number> = {};
+  private examDelays: Record<string, ManualDelay> = {};
   private startedAt: Record<string, number> = {};
   private manual = new Set<string>();
   private states: Record<string, CueState> = {};
@@ -88,11 +91,17 @@ export class PlayerController {
   arm(
     plan: PlannedCue[],
     mode: RunMode,
-    opts: { restore?: Record<string, CueState>; date?: string; starts?: Record<string, number> } = {},
+    opts: {
+      restore?: Record<string, CueState>;
+      date?: string;
+      starts?: Record<string, number>;
+      examDelays?: Record<string, ManualDelay>;
+    } = {},
   ) {
     this.disarm(false);
     this.basePlan = plan;
     this.starts = { ...opts.starts };
+    this.examDelays = { ...opts.examDelays };
     this.startedAt = {};
     this.manual.clear();
     this.applyDelays();
@@ -209,6 +218,7 @@ export class PlayerController {
       states: { ...this.states },
       starts: { ...this.starts },
       delays: { ...this.delays },
+      examDelays: { ...this.examDelays },
       startedAt: { ...this.startedAt },
       manual: [...this.manual],
       playing: Object.entries(this.states)
@@ -371,6 +381,49 @@ export class PlayerController {
     }
   }
 
+  /**
+   * 지금 진행 중(또는 다음)인 시험: 아직 나가지 않은 다음 종료령과, 그 시험에서 아직 남은 방송들.
+   * 이 시험의 종료를 담당자가 늦출 때 쓴다.
+   */
+  currentExam(): { end: PlannedCue; remaining: PlannedCue[]; delayMs: number } | null {
+    const end = this.plan.find((p) => p.cue.examEnd && (this.states[p.cue.id] ?? 'pending') === 'pending');
+    if (!end) return null;
+    const idx = this.plan.indexOf(end);
+    let from = idx;
+    while (from > 0 && !this.plan[from - 1].cue.examEnd) from--;
+    const remaining = this.plan.slice(from, idx + 1).filter((p) => (this.states[p.cue.id] ?? 'pending') === 'pending');
+    return { end, remaining, delayMs: this.examDelays[end.cue.id]?.ms ?? 0 };
+  }
+
+  /**
+   * 담당자가 이 시험의 종료를 늦춘다 (예: 영어 듣기평가가 늦게 시작됨 → +2분).
+   * 아직 나가지 않은 이 시험의 방송(종료 n분 전·종료령)만 늦추고, 다음 교시는 원래 시각대로.
+   * 곧 송출(예약됨) 중인 방송은 건드리지 않는다. deltaMs가 음수면 늦춘 만큼을 줄인다(0 아래로는 안 감).
+   * @returns 바뀐 종료령 시각, 늦출 수 없으면 null
+   */
+  delayExam(endCueId: string, deltaMs: number): number | null {
+    const cur = this.currentExam();
+    if (!cur || cur.end.cue.id !== endCueId || !cur.remaining.length) return null;
+    const baseOf = (id: string) => this.basePlan.find((b) => b.cue.id === id)!.at;
+    const prev = this.examDelays[endCueId];
+    const ms = Math.max(0, (prev?.ms ?? 0) + deltaMs);
+    // 이미 나간 방송은 다시 늦추지 않도록, 처음 늦출 때 남아 있던 첫 방송부터 적용
+    const fromAt = prev?.fromAt ?? Math.min(...cur.remaining.map((p) => baseOf(p.cue.id)));
+    if (ms === 0) delete this.examDelays[endCueId];
+    else this.examDelays[endCueId] = { ms, fromAt };
+    this.applyDelays();
+    const endAt = this.plan.find((p) => p.cue.id === endCueId)!.at;
+    const min = Math.round(ms / 6000) / 10;
+    this.push(
+      'warn',
+      ms === 0
+        ? `담당자가 ${cur.end.cue.period} 종료 늦춤을 되돌림 → 종료령 원래 시각`
+        : `담당자가 ${cur.end.cue.period} 종료를 ${min}분 늦춤 → 종료령 ${new Date(endAt).toLocaleTimeString('ko-KR', { hour12: false, timeZone: 'Asia/Seoul' })}`,
+    );
+    this.emit();
+    return endAt;
+  }
+
   /** 본령이 실제로 울리는 시각을 기록하고, 늦었으면 이 시험의 뒤 방송을 늦춘다 */
   private recordStart(item: PlannedCue, startAt: number) {
     if (!item.cue.examStart) return;
@@ -385,7 +438,7 @@ export class PlayerController {
   }
 
   private applyDelays() {
-    const r = applyExamDelays(this.basePlan, this.starts);
+    const r = applyExamDelays(this.basePlan, this.starts, this.examDelays);
     this.plan = r.plan;
     this.delays = r.delays;
   }

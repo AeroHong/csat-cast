@@ -67,23 +67,47 @@ export function shiftPlan(plan: PlannedCue[], startAt: number, speed = 1): Plann
 }
 
 /**
+ * 담당자가 직접 늦춘 시험 (영어 듣기평가가 늦게 시작된 경우처럼 앱이 알 수 없는 지연).
+ * 키는 그 시험의 종료령 큐 id. fromAt(원래 시각 기준) 이후의 방송부터 종료령까지 ms만큼 늦춘다.
+ */
+export interface ManualDelay {
+  ms: number;
+  fromAt: number;
+}
+
+/**
  * 본령이 늦게 울렸으면 그 시험의 뒤 방송(종료령까지)을 같은 만큼 늦춘 계획을 돌려준다 (시험 시간 보장).
  * 종료령 다음 방송(쉬는 시간·다음 교시)은 원래 시각대로라 쉬는 시간이 줄어든다.
  * 아직 울리지 않은 본령은 그 자신이 늦춰진 만큼을 그대로 이어받는다 (예: 첫 번째 시험이 늦으면 합본 종료령도 늦게 나가므로).
  * @param starts 본령이 실제로 울린 시각
+ * @param manual 담당자가 직접 늦춘 시험 (종료령 큐 id → 늦춘 시간)
  * @returns 늦춘 계획(시각순)과 큐별 늦춘 시간(ms)
  */
 export function applyExamDelays(
   plan: PlannedCue[],
   starts: Record<string, number>,
+  manual: Record<string, ManualDelay> = {},
 ): { plan: PlannedCue[]; delays: Record<string, number> } {
   const delays: Record<string, number> = {};
+  const endAt = new Map(plan.filter((p) => manual[p.cue.id]).map((p) => [p.cue.id, p.at]));
   let shift = 0;
   const out = plan.map(({ cue, at }) => {
-    const applied = shift;
+    let applied = shift;
+    /** 이 큐 다음 방송에도 그대로 이어지는 담당자 늦춤 (이 큐가 그 시험의 종료령이면 0) */
+    let manualCont = 0;
+    // 담당자가 직접 늦춘 시험: 늦춘 시점 이후 ~ 그 시험의 종료령까지
+    for (const [endId, m] of Object.entries(manual)) {
+      const end = endAt.get(endId);
+      if (end !== undefined && m.ms > 0 && at >= m.fromAt && at <= end) {
+        applied += m.ms;
+        if (cue.id !== endId) manualCont += m.ms;
+      }
+    }
     if (applied > 0) delays[cue.id] = applied;
     if (cue.examEnd) shift = 0;
-    if (cue.examStart) shift = starts[cue.id] !== undefined ? Math.max(0, starts[cue.id] - at) : applied;
+    // 본령 다음 방송이 이어받을 늦춤. 담당자 늦춤은 뒤 방송에 따로 더해지므로 빼서 두 번 늦추지 않는다
+    // (합본처럼 이 큐가 늦춘 시험의 종료령이면 다음 시험이 그대로 이어받는다)
+    if (cue.examStart) shift = Math.max(0, (starts[cue.id] !== undefined ? starts[cue.id] - at : applied) - manualCont);
     return { cue, at: at + applied };
   });
   return { plan: out.sort((x, y) => x.at - y.at), delays };

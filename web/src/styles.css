@@ -391,3 +391,10 @@ ul.problems ul { margin: 4px 0 0; padding-left: 18px; font-size: 0.85rem; }
 .power-help ul { margin: 6px 0 0; padding-left: 18px; line-height: 1.6; }
 .ok-text { color: var(--ok); font-weight: 600; }
 table.list tr.is-selected td { background: color-mix(in srgb, var(--primary) 10%, transparent); }
+
+/* 이번 시험 종료 늦추기 */
+.exam-delay { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px; background: var(--bg); }
+.exam-delay h3 { margin: 0 0 4px; font-size: 1rem; }
+.exam-delay-target { margin: 8px 0; }
+.exam-delay .big-time { font-size: 1.25rem; font-weight: 800; }
+.exam-delay .row button { padding: 6px 12px; }

@@ -1,4 +1,4 @@
-import { initialStates, type CueState, type PlannedCue } from './scheduler';
+import { initialStates, type CueState, type ManualDelay, type PlannedCue } from './scheduler';
 import type { RunMode } from './types';
 
 /**
@@ -19,6 +19,8 @@ export interface SavedRun {
   planKey?: string;
   /** 본령이 실제로 울린 시각 (뒤 방송을 늦출 때 씀). 이전 버전 기록에는 없다 */
   starts?: Record<string, number>;
+  /** 담당자가 직접 늦춘 시험 (종료령 큐 id → 늦춘 시간) */
+  examDelays?: Record<string, ManualDelay>;
 }
 
 const key = (school: string, channel: string) => `csat-cast:run:${school}:${channel}`;
