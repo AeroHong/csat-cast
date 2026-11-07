@@ -6,6 +6,7 @@ import {
   cellState,
   cuesHash,
   devicesConflict,
+  devicesOpen,
   expectedCues,
   type Cell,
   type DevicePresence,
@@ -109,7 +110,7 @@ export function buildRows(
       const modeOk = mode === 'all' || s?.mode === mode;
       const armed = !!s?.armed && modeOk;
       const timeline = armed && Array.isArray(s?.timeline) ? s!.timeline! : null;
-      const devices = devicesConflict(presence[code]?.[ch]);
+      const devices = devicesOpen(presence[code]?.[ch]);
       const hashMismatch = !!s?.planHash && expected.length > 0 && s.planHash !== cuesHash(expected);
       const sit = chCfg && !chCfg.customCues ? csatSituation(chCfg.templateId) : undefined;
       const row: ChannelRow = {
@@ -144,7 +145,9 @@ export function judge(r: Omit<ChannelRow, 'health' | 'reasons'>, now: number): {
   const bad: string[] = [];
   const warn: string[] = [];
   if (r.special && !r.customSchedule) bad.push('1.5배 시간표 미등록 (학교 [시간표 편집]에서 만들어야 함)');
-  if (r.devices.length > 1) bad.push(`같은 채널을 PC ${r.devices.length}대가 열어 둠 (이중 송출 위험)`);
+  const doubleArmed = devicesConflict(Object.fromEntries(r.devices.map((d, i) => [String(i), d])));
+  if (doubleArmed.length) bad.push(`같은 채널을 PC ${doubleArmed.length}대가 자동 방송 중 (이중 송출 위험)`);
+  else if (r.devices.length > 1) warn.push(`같은 채널 화면이 PC ${r.devices.length}대에 열려 있음 (자동 방송은 한 대만)`);
   const s = r.s;
   if (!s) return bad.length ? { health: 'bad', reasons: [...bad, '접속 기록 없음'] } : { health: 'none', reasons: ['접속 기록 없음'] };
   if (!r.online) bad.push(s.armed ? '연결 끊김 (PC에서 재생은 계속될 수 있음)' : '연결 끊김');

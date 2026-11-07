@@ -150,6 +150,39 @@ describe.skipIf(!ON)('사용 신청·승인과 권한 규칙 (에뮬레이터)',
     await denied(setDoc(doc(teacher.db, 'accessRequests', tUid), { uid: tUid, schoolId: 'd13-20', status: 'pending' }));
   });
 
+  it('같은 학교에 담당 교사를 여러 명 승인할 수 있고, 한 명을 회수해도 다른 담당자는 그대로다', async () => {
+    const oUid = other.auth.currentUser!.uid;
+    await setDoc(doc(other.db, 'accessRequests', oUid), {
+      uid: oUid,
+      email: 'x',
+      displayName: '',
+      name: '부담당',
+      phone: '',
+      schoolId: 'd13-01',
+      neisCode: '',
+      status: 'pending',
+      requestedAt: serverTimestamp(),
+    });
+    await admin.call('approveAccess', { uid: oUid });
+    await other.auth.currentUser!.getIdToken(true);
+    // 두 사람 모두 같은 학교 권한: 설정 읽기, 각자 PC 접속 기록, 학교 시간표(channels) 저장
+    for (const [c, uid, dev] of [
+      [teacher, tUid, 'pc-a'],
+      [other, oUid, 'pc-b'],
+    ] as const) {
+      expect((await getDoc(doc(c.db, 'schools', 'd13-01'))).exists()).toBe(true);
+      await set(ref(c.rtdb, `presence/d13-01/main/${dev}`), { uid, since: 1 });
+    }
+    const channels = (await getDoc(doc(other.db, 'schools', 'd13-01'))).data()!.channels;
+    await setDoc(doc(other.db, 'schools', 'd13-01'), { channels }, { merge: true });
+    // 부담당 회수 → 담당 교사 권한은 유지
+    await admin.call('revokeAccess', { uid: oUid, reason: '시험' });
+    await signInWithEmailAndPassword(other.auth, `other${stamp}@example.com`, 'pw123456');
+    await other.auth.currentUser!.getIdToken(true);
+    await denied(getDoc(doc(other.db, 'schools', 'd13-01')));
+    expect((await getDoc(doc(teacher.db, 'schools', 'd13-01'))).exists()).toBe(true);
+  });
+
   it('감사 기록은 Functions만 쓰고 관리자만 읽는다', async () => {
     await denied(addDoc(collection(teacher.db, 'auditLogs'), { action: 'approve' }));
     await denied(getDocs(collection(teacher.db, 'auditLogs')));

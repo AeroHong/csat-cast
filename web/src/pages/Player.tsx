@@ -6,8 +6,10 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import AppShell, { type NavItem } from '../components/AppShell';
 import { useSearchParams } from 'react-router-dom';
 import { audioEngine, type LoadResult } from '../core/audio';
-import { usingEmulator } from '../core/firebase';
-import { cuesHash, devicesConflict, toTimeline, type DevicePresence } from '../core/board';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { defaultProfile } from '../core/catalog';
+import { fb, usingEmulator } from '../core/firebase';
+import { cuesHash, devicesConflict, devicesOpen, toTimeline, type DevicePresence } from '../core/board';
 import {
   loadBuiltinAssets,
   loadGlobalConfig,
@@ -73,6 +75,9 @@ export default function Player() {
   const [rehearsals, setRehearsals] = useState<ScheduledRehearsal[]>([]);
   /** 화면 탭: 실전 방송 / 테스트·리허설 / 시간표 편집 */
   const [tab, setTab] = useState<'live' | 'test' | 'edit'>('live');
+  /** 서버에 저장된 최신 학교 설정 (다른 PC에서 바꾼 것을 알아채기 위함) */
+  const [remoteProfile, setRemoteProfile] = useState<SchoolProfile | null>(null);
+  const [remoteNote, setRemoteNote] = useState<string | null>(null);
   const reporterRef = useRef<Reporter | null>(null);
   const presenceRef = useRef<ReturnType<typeof startPresence> | null>(null);
   /** 같은 채널을 연 PC들 (다른 PC에서도 열었으면 이중 송출 위험) */
@@ -81,6 +86,11 @@ export default function Player() {
   const channelId = params.get('channel') ?? profile?.channels[0]?.id ?? 'main';
   const channel = profile?.channels.find((c) => c.id === channelId) ?? profile?.channels[0];
   const template = templates.find((t) => t.id === channel?.templateId);
+  /** 같은 채널 화면을 연 다른 PC (같은 학교의 다른 담당자 등) */
+  const otherDevices = devicesOpen(Object.fromEntries(Object.entries(devices).filter(([id]) => id !== deviceId())));
+  /** 서버의 학교 설정이 이 PC가 쓰는 것과 다름 (다른 PC에서 시간표 저장·관리자 유형 변경) */
+  const remoteChanged =
+    !!remoteProfile && !!profile && stableJson(remoteProfile.channels) !== stableJson(profile.channels);
   /** 학교가 직접 만든 시간표로 방송하는가 (평가원 유형 대신) */
   const custom = !!channel?.customCues;
   const cues = useMemo(() => resolveCues(template, channel), [template, channel]);
@@ -257,6 +267,32 @@ export default function Player() {
     };
     // 채널 설정 내용(시간표 저장 등)이 바뀔 때마다 보고를 다시 시작하지 않도록 채널 id 기준
   }, [neisCode, !!profile, channel?.id]);
+
+  // 5-1) 다른 PC(같은 학교의 다른 담당자)가 저장한 시간표·설정을 따라간다.
+  //      방송 대기 중이 아니면 바로 반영하고, 자동 방송 중이면 멈춘 뒤 반영한다 (진행 중인 방송 계획은 바꾸지 않음).
+  useEffect(() => {
+    if (!fb || neisCode === 'LOCAL' || !profile) return;
+    return onSnapshot(
+      doc(fb.db, 'schools', neisCode),
+      (d) => {
+        if (d.exists()) setRemoteProfile({ ...defaultProfile(neisCode), ...(d.data() as Partial<SchoolProfile>), neisCode });
+      },
+      () => undefined,
+    );
+  }, [neisCode, !!profile]);
+  useEffect(() => {
+    if (!remoteChanged || snap.armed || !remoteProfile) return;
+    let cancelled = false;
+    void loadSchoolAssets(neisCode).then((s) => {
+      if (cancelled) return;
+      setAssets((a) => [...a.filter((x) => x.source === 'builtin'), ...s]);
+      setProfile(remoteProfile);
+      setRemoteNote(`다른 PC에서 저장한 학교 시간표·설정을 불러왔습니다 (${kstTime(serverClock.now())}).`);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [remoteChanged, snap.armed]);
 
   // 6) 스피커 확인 결과는 오늘 하루 동안 기억
   useEffect(() => {
@@ -689,20 +725,33 @@ export default function Player() {
               방송이 모두 끝난 뒤 다시 로그인하세요.
             </div>
           )}
-                    {devicesConflict(devices).length > 0 && (
+          {devicesConflict(devices).length > 0 ? (
             <div className="banner bad">
-              ⛔ 다른 PC에서도 이 방송 채널이 열려 있습니다 (이중 송출 위험). 한 대만 남기고 나머지 PC의 창을 닫으세요.
+              ⛔ 다른 PC에서도 이 방송 채널을 자동 방송 중입니다 (이중 송출 위험). 한 대만 남기고 나머지 PC는 방송을 멈추세요.
               <ul>
                 {devicesConflict(devices).map((d, i) => (
                   <li key={i}>
                     {d.name || d.email || d.uid} · {new Date(d.since).toLocaleTimeString('ko-KR')}부터
-                    {d.armed ? ' · 자동 방송 중' : ''}
                     {Object.entries(devices).find(([, v]) => v === d)?.[0] === deviceId() ? ' (이 PC)' : ''}
                   </li>
                 ))}
               </ul>
             </div>
+          ) : (
+            otherDevices.length > 0 && (
+              <div className="banner">
+                다른 PC에서도 이 채널 화면이 열려 있습니다:{' '}
+                {otherDevices.map((d) => `${d.name || d.email || d.uid}${d.armed ? '(자동 방송 중)' : ''}`).join(', ')}. 자동 방송은 한
+                PC에서만 시작하세요.
+              </div>
+            )
           )}
+          {remoteChanged && snap.armed && (
+            <div className="banner warn">
+              다른 PC에서 학교 시간표·설정을 바꿨습니다. 지금 진행 중인 방송에는 반영되지 않고, 방송을 멈추면 자동으로 반영됩니다.
+            </div>
+          )}
+          {remoteNote && !remoteChanged && <div className="banner okay">{remoteNote}</div>}
           {updatePending && (
             <div className="banner">새 버전이 준비되어 있습니다. 방송이 끝난 뒤 자동으로 적용됩니다 (방송 중에는 적용하지 않음).</div>
           )}
@@ -897,6 +946,7 @@ export default function Player() {
               template={template}
               assets={assets}
               locked={snap.armed}
+              othersArmed={otherDevices.filter((d) => d.armed).map((d) => d.name || d.email || d.uid)}
               onProfile={setProfile}
               onAssets={setAssets}
             />
@@ -1065,5 +1115,14 @@ function DurationCell({ ms, slot }: { ms: number; slot?: { at: number; nextAt?: 
       {end !== undefined && <span className={overlap ? '' : 'muted'}> ~{kstTime(end).slice(0, 5)}</span>}
       {overlap && ' ⚠ 다음 방송과 겹침'}
     </td>
+  );
+}
+
+/** 키 순서와 상관없이 비교하기 위한 JSON (서버에서 읽은 객체는 키 순서가 다를 수 있다) */
+function stableJson(v: unknown): string {
+  return JSON.stringify(v, (_k, x) =>
+    x && typeof x === 'object' && !Array.isArray(x)
+      ? Object.fromEntries(Object.entries(x as Record<string, unknown>).filter(([, y]) => y !== undefined).sort(([a], [b]) => a.localeCompare(b)))
+      : x,
   );
 }

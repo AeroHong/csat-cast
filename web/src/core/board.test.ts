@@ -6,6 +6,7 @@ import {
   cellState,
   cuesHash,
   devicesConflict,
+  devicesOpen,
   expectedCues,
   formatDrift,
   nextAcross,
@@ -137,12 +138,18 @@ describe('nextAcross: 전체 다음 방송', () => {
   });
 });
 
-describe('devicesConflict: 같은 채널 이중 실행', () => {
-  it('1대면 문제없음, 2대 이상이면 먼저 연 순서로', () => {
+describe('devicesConflict: 같은 채널 이중 송출', () => {
+  it('화면만 여러 대 열려 있으면(담당자 여럿) 문제 아님', () => {
     expect(devicesConflict({ a: { uid: 'u', since: 1 } })).toEqual([]);
     expect(devicesConflict(null)).toEqual([]);
-    const r = devicesConflict({ a: { uid: 'u1', since: 5 }, b: { uid: 'u2', since: 2 } });
+    expect(devicesConflict({ a: { uid: 'u1', since: 5 }, b: { uid: 'u2', since: 2, armed: true } })).toEqual([]);
+  });
+  it('2대 이상이 자동 방송 중이면 먼저 연 순서로', () => {
+    const r = devicesConflict({ a: { uid: 'u1', since: 5, armed: true }, b: { uid: 'u2', since: 2, armed: true }, c: { uid: 'u3', since: 1 } });
     expect(r.map((d) => d.uid)).toEqual(['u2', 'u1']);
+  });
+  it('devicesOpen은 열린 PC 전부를 먼저 연 순서로', () => {
+    expect(devicesOpen({ a: { uid: 'u1', since: 5 }, b: { uid: 'u2', since: 2 } }).map((d) => d.uid)).toEqual(['u2', 'u1']);
   });
 });
 

@@ -23,6 +23,8 @@ interface Props {
   assets: Asset[];
   /** 자동 방송 중에는 고칠 수 없다 */
   locked: boolean;
+  /** 같은 채널을 자동 방송 중인 다른 PC (담당자 이름) */
+  othersArmed?: string[];
   onProfile: (p: SchoolProfile) => void;
   onAssets: (a: Asset[]) => void;
 }
@@ -56,7 +58,7 @@ function addMinutes(time: string, min: number) {
  * 학교 자체 시간표 편집 + 학교 음원 관리.
  * 저장하기 전까지는 방송에 반영되지 않는다. 저장하면 이 채널은 평가원 유형 대신 이 시간표로 방송한다.
  */
-export default function ScheduleEditor({ neisCode, profile, channel, template, assets, locked, onProfile, onAssets }: Props) {
+export default function ScheduleEditor({ neisCode, profile, channel, template, assets, locked, othersArmed = [], onProfile, onAssets }: Props) {
   const saved = channel.customCues;
   const initialDraft = () => loadStoredDraft(neisCode, channel.id, saved) ?? (saved ? structuredClone(saved) : null);
   const [draft, setDraft] = useState<Cue[] | null>(initialDraft);
@@ -390,6 +392,12 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
           </span>
         </div>
         {locked && <div className="banner warn">자동 방송 중에는 시간표를 고칠 수 없습니다. 방송을 중지한 뒤 고치세요.</div>}
+        {!locked && othersArmed.length > 0 && (
+          <div className="banner warn">
+            이 채널은 다른 PC({othersArmed.join(', ')})에서 자동 방송 중입니다. 여기서 저장해도 그 PC의 진행 중인 방송에는 반영되지 않고,
+            그 PC가 방송을 멈추면 반영됩니다.
+          </div>
+        )}
         {error && <div className="banner bad">{error}</div>}
         {notice && <div className="banner">{notice}</div>}
         {importNotes.length > 0 && (

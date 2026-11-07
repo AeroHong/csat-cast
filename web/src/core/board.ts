@@ -178,10 +178,15 @@ export interface DevicePresence {
   armed?: boolean;
 }
 
-/** 같은 채널을 2대 이상의 PC가 열었으면 그 목록 (이중 송출 위험) */
+/** 같은 채널 화면을 연 PC 목록 (먼저 연 순서). 학교 담당자가 여럿이면 2대 이상도 정상이다 */
+export function devicesOpen(devices: Record<string, DevicePresence> | undefined | null): DevicePresence[] {
+  return Object.values(devices ?? {}).sort((a, b) => a.since - b.since);
+}
+
+/** 같은 채널을 2대 이상의 PC가 **자동 방송 중**이면 그 목록 (실제 이중 송출 위험). 화면만 열어 둔 PC는 세지 않는다 */
 export function devicesConflict(devices: Record<string, DevicePresence> | undefined | null): DevicePresence[] {
-  const list = Object.values(devices ?? {});
-  return list.length > 1 ? list.sort((a, b) => a.since - b.since) : [];
+  const armed = devicesOpen(devices).filter((d) => d.armed);
+  return armed.length > 1 ? armed : [];
 }
 
 /** 송출 오차 표시: +0.12초 / -0.03초 */
