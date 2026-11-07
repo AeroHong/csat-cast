@@ -236,6 +236,11 @@ label.inline select { padding: 4px 6px; }
   /* AppShell(fill) 본문 높이를 채운다 */
   .player { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
   .player-body { flex: 1; min-height: 0; grid-template-columns: clamp(380px, 28vw, 520px) minmax(0, 1fr); }
+  /* 시간표 편집: 한 열로 넓게. 왼쪽 칸에는 경고 배너만 남아 위에 붙는다 */
+  .player-body.editing { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .player-body.editing .col-side { grid-row: 1; overflow: visible; padding-right: 0; }
+  .player-body.editing .col-main { grid-row: 2; }
+  .player-body.editing .col-side:empty { display: none; }
   .col-side { min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 4px; }
   .col-main { min-height: 0; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; }
   /* 시간표 편집처럼 위에 카드가 더 있어도 표가 0줄로 줄어들지 않게 */

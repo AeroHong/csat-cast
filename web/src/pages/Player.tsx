@@ -702,12 +702,15 @@ export default function Player() {
       )}
 
 
-      <div className="player-body">
+      {/* 시간표 편집에서는 상태 요약·시계 대신 편집 영역을 넓게 쓴다 (중요 경고는 위에 그대로) */}
+      <div className={`player-body ${tab === 'edit' ? 'editing' : ''}`}>
         <div className="col-side">
-          <div className={`headline ${headline.level}`}>
-            <div className="headline-title">{headline.title}</div>
-            {headline.detail && <div>{headline.detail}</div>}
-          </div>
+          {tab !== 'edit' && (
+            <div className={`headline ${headline.level}`}>
+              <div className="headline-title">{headline.title}</div>
+              {headline.detail && <div>{headline.detail}</div>}
+            </div>
+          )}
 
           {channel && templates.length > 0 && !template && !custom && (
             <div className="banner bad">
@@ -756,6 +759,7 @@ export default function Player() {
             <div className="banner">새 버전이 준비되어 있습니다. 방송이 끝난 뒤 자동으로 적용됩니다 (방송 중에는 적용하지 않음).</div>
           )}
 
+          {tab !== 'edit' && (
           <section className="clock-panel">
             <div className="clock">{kstTime(now)}</div>
             <div className="muted">
@@ -771,6 +775,7 @@ export default function Player() {
               <div className="next">오늘 예정된 방송을 모두 마쳤습니다.</div>
             ) : null}
           </section>
+          )}
 
           {tab === 'live' && (
             <section className="card">
