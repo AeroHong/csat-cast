@@ -23,7 +23,9 @@ import {
   Toolbar,
   Tooltip,
   Typography,
+  useMediaQuery,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import { useState, type ReactNode } from 'react';
 import { useColorMode } from '../theme';
 
@@ -85,7 +87,10 @@ export default function AppShell<K extends string>({
   children: ReactNode;
 }) {
   const { mode, toggle } = useColorMode();
-  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const [userCollapsed, setCollapsed] = useState(readCollapsed);
+  // 1200px보다 좁으면 메뉴를 아이콘만 남기고 접는다 (본문 폭 확보)
+  const narrow = useMediaQuery(useTheme().breakpoints.down('lg'));
+  const collapsed = userCollapsed || narrow;
   const [userMenu, setUserMenu] = useState<HTMLElement | null>(null);
   const width = collapsed ? MINI_W : OPEN_W;
   const current = nav.find((n) => n.key === active);
@@ -163,7 +168,7 @@ export default function AppShell<K extends string>({
           })}
         </List>
         <Divider />
-        <Box sx={{ display: 'flex', justifyContent: collapsed ? 'center' : 'flex-end', p: 1 }}>
+        <Box sx={{ display: narrow ? 'none' : 'flex', justifyContent: collapsed ? 'center' : 'flex-end', p: 1 }}>
           <Tooltip title={collapsed ? '메뉴 펼치기' : '메뉴 접기'} placement="right">
             <IconButton size="small" onClick={toggleCollapsed}>
               {collapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
@@ -178,7 +183,7 @@ export default function AppShell<K extends string>({
             <Typography variant="h6" component="h1" noWrap sx={{ fontWeight: 800 }}>
               {title ?? current?.label}
             </Typography>
-            {status && <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>{status}</Box>}
+            {status && <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, overflow: 'hidden' }}>{status}</Box>}
             <Box sx={{ flex: 1 }} />
             {right}
             <Tooltip title={mode === 'dark' ? '밝은 화면' : '어두운 화면'}>
@@ -220,7 +225,8 @@ export default function AppShell<K extends string>({
           component="main"
           sx={
             fill
-              ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', px: 3, pt: 1.5, pb: 1.5 }
+              ? // 1200px 이상에서만 화면 높이에 고정(열마다 따로 스크롤). 좁으면 한 열로 쌓이므로 본문 전체를 스크롤
+                { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: { xs: 'auto', lg: 'hidden' }, px: 3, pt: 1.5, pb: 1.5 }
               : { flex: 1, minHeight: 0, overflow: 'auto', px: 3, pt: 2.5, pb: 5 }
           }
         >

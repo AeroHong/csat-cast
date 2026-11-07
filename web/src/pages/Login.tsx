@@ -73,7 +73,7 @@ export default function Login() {
   return (
     <AuthLayout title="수능 방송 스케줄러" subtitle="타종·안내 방송을 시간표에 맞춰 자동으로 송출합니다." width={firebaseEnabled ? 1040 : 520}>
       {firebaseEnabled ? (
-        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3, alignItems: 'start' }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 3, alignItems: 'start' }}>
           <Paper variant="outlined" sx={{ p: 3.5 }}>
             <Stack spacing={2.5}>
               <Typography variant="h6">시험장 담당 교사 로그인</Typography>
