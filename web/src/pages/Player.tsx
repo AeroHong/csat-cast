@@ -959,7 +959,7 @@ export default function Player() {
             <section className="card timetable-card">
               <div className="timetable-head">
                 <h2>오늘 시간표</h2>
-                <span className="muted small">자동 방송이 안 나갔을 때는 해당 줄의 [지금 재생]을 누르면 즉시 송출됩니다.</span>
+                <span className="muted small">자동 방송이 안 나갔을 때(건너뜀·실패)는 해당 줄의 [지금 재생]을 누르면 즉시 송출됩니다. 이미 송출한 방송은 다시 누를 수 없습니다.</span>
               </div>
               <div className="table-scroll" ref={tableScrollRef}>
                 <table className="timeline">
@@ -1014,6 +1014,11 @@ export default function Player() {
                               {sounding ? (
                                 <button className="small danger" onClick={() => audioEngine.stopAsset(cue.assetId)} title="이 음원 재생 정지">
                                   ■ 정지
+                                </button>
+                              ) : snap.plan.length && (st === 'done' || st === 'playing' || st === 'scheduled') ? (
+                                // 이미 송출했거나 곧 나갈 방송은 다시 누를 수 없다 (실전·테스트 모두, 같은 안내 두 번 송출 방지)
+                                <button className="small" disabled title={st === 'done' ? '이미 송출한 방송입니다' : '곧 자동으로 송출됩니다'}>
+                                  {st === 'done' ? '✓ 송출 완료' : '곧 송출'}
                                 </button>
                               ) : (
                                 <button

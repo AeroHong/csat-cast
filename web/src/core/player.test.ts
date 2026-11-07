@@ -341,7 +341,7 @@ describe('관리자 화면 보고용 기록 (실제 시작 시각·수동 송출
     expect(s.startedAt.bell).toBe(20_000);
   });
 
-  it('이미 송출된 방송을 다시 틀어도 원래 송출 기록은 그대로', async () => {
+  it('이미 송출된 방송은 [지금 재생]으로도 다시 나가지 않고, 송출 기록도 그대로', async () => {
     player.arm(plan, 'test');
     await flush();
     clock.t = 9_000;
@@ -349,9 +349,26 @@ describe('관리자 화면 보고용 기록 (실제 시작 시각·수동 송출
     audio.endAll();
     await flush();
     expect(player.snapshot().states.bell).toBe('done');
+    const played = audio.played.length;
     clock.t = 30_000;
     await player.playNow('bell');
+    expect(audio.played.length).toBe(played);
+    expect(player.snapshot().events[0].message).toContain('이미 송출한 방송');
     expect(player.snapshot().manual).toEqual([]);
     expect(player.snapshot().startedAt.bell).toBe(10_000);
+  });
+
+  it('이미 울린 본령을 다시 눌러도 시험 시간(종료령)을 늦추지 않는다', async () => {
+    const exam: PlannedCue[] = [
+      { cue: { ...cue('start', 'bell'), examStart: true }, at: 0 },
+      { cue: { ...cue('end', 'bell'), examEnd: true }, at: 120_000 },
+    ];
+    player.arm(exam, 'test');
+    tick();
+    audio.endAll();
+    await flush();
+    clock.t = 30_000;
+    await player.playNow('start');
+    expect(player.snapshot().plan.find((p) => p.cue.id === 'end')!.at).toBe(120_000);
   });
 });

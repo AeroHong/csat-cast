@@ -149,6 +149,13 @@ export class PlayerController {
     // 수동으로 재생한 큐는 자동 재생 대상에서 뺀다 (중복 방지). 디코딩을 기다리는 사이 자동 재생되지 않도록 먼저 바꾼다.
     // 건너뜀·실패였던 큐를 직접 내보낸 경우도 '수동 송출'로 기록한다 (관리자 화면에서 빨강이 풀리도록).
     const prev = this.states[cueId];
+    // 이미 송출했거나 송출 중·직전인 방송은 다시 내지 않는다 (같은 안내 두 번 송출 방지.
+    // 본령을 다시 울리면 그때를 시험 시작으로 보고 종료령까지 늦춰 버리는 문제도 막는다)
+    if (prev === 'done' || prev === 'playing' || prev === 'scheduled') {
+      this.push('warn', `${prev === 'done' ? '이미 송출한' : '지금 송출 중인'} 방송이라 다시 재생하지 않습니다: ${item.cue.label}`, cueId);
+      this.emit();
+      return;
+    }
     const counts = prev === 'pending' || prev === 'skipped' || prev === 'failed';
     if (counts) this.states[cueId] = 'done';
     try {
