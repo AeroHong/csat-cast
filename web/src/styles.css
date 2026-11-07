@@ -211,6 +211,7 @@ button.link.danger-text { color: var(--bad); }
 .edit-start { padding: 8px 0; }
 .edit-issues { margin: 8px 0; padding-left: 18px; font-size: 0.9rem; }
 .edit-issues li.bad { color: var(--bad); }
+.edit-table tr.no-audio td { background: var(--bad-bg); }
 .edit-issues li.warn { color: var(--warn); }
 .edit-actions { margin-top: 10px; }
 .edit-actions .spacer { flex: 1; }
@@ -236,7 +237,9 @@ label.inline select { padding: 4px 6px; }
   .player { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
   .player-body { flex: 1; min-height: 0; grid-template-columns: clamp(380px, 28vw, 520px) minmax(0, 1fr); }
   .col-side { min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 4px; }
-  .col-main { min-height: 0; display: flex; flex-direction: column; }
+  .col-main { min-height: 0; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; }
+  /* 시간표 편집처럼 위에 카드가 더 있어도 표가 0줄로 줄어들지 않게 */
+  .timetable-card .table-scroll { min-height: 220px; }
   .timetable-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .table-scroll { flex: 1; min-height: 0; overflow: auto; }
   .timeline thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); box-shadow: 0 1px 0 var(--line); }

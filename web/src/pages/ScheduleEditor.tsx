@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { audioEngine } from '../core/audio';
 import { loadSchoolAssetDocs } from '../core/catalog';
 import {
@@ -9,6 +9,7 @@ import {
   uploadSchoolAudio,
   type SchoolAssetDoc,
 } from '../core/schoolSchedule';
+import { assignByFileName, looksLikeSchedule, parseScheduleRows, timeFromFileName } from '../core/scheduleImport';
 import type { Asset, ChannelConfig, Cue, SchoolProfile, Template } from '../core/types';
 import AudioComposer from './AudioComposer';
 import { formatDuration } from './NowPlaying';
@@ -28,6 +29,19 @@ interface Props {
 
 const newId = () => `s-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
+/** 저장하지 않은 편집 내용 (이 PC에만). 음원을 다 만들기 전에 새로고침해도 엑셀로 채운 시간표가 남게 */
+const draftKey = (neisCode: string, channelId: string) => `csat-cast:schedule-draft:${neisCode}:${channelId}`;
+function loadStoredDraft(neisCode: string, channelId: string, saved: Cue[] | undefined): Cue[] | null {
+  try {
+    const v = localStorage.getItem(draftKey(neisCode, channelId));
+    if (!v) return null;
+    const d = JSON.parse(v) as Cue[];
+    return JSON.stringify(d) !== JSON.stringify(saved ?? null) ? d : null;
+  } catch {
+    return null;
+  }
+}
+
 /** "HH:MM" 또는 "HH:MM:SS" → "HH:MM:SS" */
 const normTime = (t: string) => (t.length === 5 ? `${t}:00` : t);
 
@@ -44,19 +58,32 @@ function addMinutes(time: string, min: number) {
  */
 export default function ScheduleEditor({ neisCode, profile, channel, template, assets, locked, onProfile, onAssets }: Props) {
   const saved = channel.customCues;
-  const [draft, setDraft] = useState<Cue[] | null>(saved ? structuredClone(saved) : null);
+  const initialDraft = () => loadStoredDraft(neisCode, channel.id, saved) ?? (saved ? structuredClone(saved) : null);
+  const [draft, setDraft] = useState<Cue[] | null>(initialDraft);
   const [docs, setDocs] = useState<[string, SchoolAssetDoc][]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(() =>
+    loadStoredDraft(neisCode, channel.id, saved)
+      ? '저장하지 않은 편집 내용을 이어서 불러왔습니다. 음원을 모두 연결한 뒤 [저장]해야 방송에 반영됩니다.'
+      : null,
+  );
+  /** 엑셀 가져오기 결과 (합친 줄·중복 등 확인할 내용) */
+  const [importNotes, setImportNotes] = useState<string[]>([]);
+  const firstChannelEffect = useRef(true);
   const [uploadLabel, setUploadLabel] = useState('');
   const [previewId, setPreviewId] = useState<string | null>(null);
   /** 타종 붙여 새 음원 만들기 열림 */
   const [composing, setComposing] = useState(false);
 
-  // 채널이 바뀌거나 저장된 시간표가 바뀌면 편집 내용을 다시 맞춘다
+  // 채널이 바뀌거나 저장된 시간표가 바뀌면 편집 내용을 다시 맞춘다 (처음 열 때는 initialDraft가 맞춰 둠)
   useEffect(() => {
-    setDraft(channel.customCues ? structuredClone(channel.customCues) : null);
+    if (firstChannelEffect.current) {
+      firstChannelEffect.current = false;
+      return;
+    }
+    setDraft(initialDraft());
+    setImportNotes([]);
   }, [channel.id, channel.customCues]);
 
   useEffect(() => {
@@ -68,6 +95,17 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
   const assetIds = useMemo(() => new Set(assets.map((a) => a.id)), [assets]);
   const check = useMemo(() => (draft ? checkSchedule(draft, assetIds) : null), [draft, assetIds]);
   const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(saved ?? null);
+  const missingAudio = [...(draft ?? [])].filter((c) => !c.assetId).sort((a, b) => a.time.localeCompare(b.time));
+
+  // 저장하지 않은 편집 내용은 이 PC에 보관하고, 저장·취소하면 지운다
+  useEffect(() => {
+    try {
+      if (dirty && draft) localStorage.setItem(draftKey(neisCode, channel.id), JSON.stringify(draft));
+      else localStorage.removeItem(draftKey(neisCode, channel.id));
+    } catch {
+      /* 보관 못 해도 편집은 계속 */
+    }
+  }, [draft, dirty, neisCode, channel.id]);
   const periods = [...new Set((draft ?? []).map((c) => c.period).filter(Boolean))];
   /** 편집 중인 시간표에서 쓰는 곳 수 */
   const usage = (id: string) => (draft ?? saved ?? []).filter((c) => c.assetId === id).length;
@@ -140,14 +178,90 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
     });
   };
 
-  const upload = (file: File) =>
+  /**
+   * 음원 올리기 (여러 개 가능). 파일 이름 앞에 시각이 있으면(1710_….mp3) 편집 중인 시간표의 같은 시각 줄에 바로 연결한다.
+   * 같은 시각 파일을 다시 올리면 그 줄의 음원이 새 파일로 바뀐다.
+   */
+  const upload = (files: File[]) =>
     run('upload', async () => {
-      const { asset, doc } = await uploadSchoolAudio(neisCode, file, uploadLabel);
-      setDocs((ds) => [...ds.filter(([id]) => id !== asset.id), [asset.id, doc]]);
-      onAssets([...assets.filter((a) => a.id !== asset.id), asset]);
+      const uploaded: { asset: Asset; doc: SchoolAssetDoc; time: string | null }[] = [];
+      const failed: string[] = [];
+      for (const [i, file] of files.entries()) {
+        setBusy(`upload:${i + 1}/${files.length}`);
+        const time = timeFromFileName(file.name);
+        const cue = time ? draft?.find((c) => c.time === time) : undefined;
+        const label = files.length === 1 && uploadLabel.trim() ? uploadLabel : cue && time ? `${time.slice(0, 5)} ${cue.label}` : '';
+        try {
+          uploaded.push({ ...(await uploadSchoolAudio(neisCode, file, label)), time });
+        } catch (e) {
+          failed.push(`${file.name}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      const ids = new Set(uploaded.map((u) => u.asset.id));
+      setDocs((ds) => [...ds.filter(([id]) => !ids.has(id)), ...uploaded.map((u) => [u.asset.id, u.doc] as [string, SchoolAssetDoc])]);
+      onAssets([...assets.filter((a) => !ids.has(a.id)), ...uploaded.map((u) => u.asset)]);
       setUploadLabel('');
-      setNotice(`"${doc.label}" 음원을 올렸습니다 (${formatDuration(doc.durationMs / 1000)}).`);
+      // 시각이 맞는 줄에 연결 (같은 시각 파일이 여럿이면 나중 것)
+      const byTime = new Map<string, string>();
+      for (const u of uploaded) if (u.time) byTime.set(u.time, u.asset.id);
+      const linkedTimes = draft ? [...byTime.keys()].filter((t) => draft.some((c) => c.time === t)) : [];
+      if (linkedTimes.length) setDraft((d) => d && d.map((c) => (byTime.has(c.time) ? { ...c, assetId: byTime.get(c.time)! } : c)));
+      const parts: string[] = [];
+      if (uploaded.length === 1 && !draft) parts.push(`"${uploaded[0].doc.label}" 음원을 올렸습니다 (${formatDuration(uploaded[0].doc.durationMs / 1000)}).`);
+      else if (uploaded.length) parts.push(`음원 ${uploaded.length}개를 올렸습니다.`);
+      if (draft && uploaded.length) {
+        parts.push(`시간표 ${linkedTimes.length}곳에 연결했습니다.`);
+        const unmatched = uploaded.filter((u) => !u.time || !linkedTimes.includes(u.time)).map((u) => u.doc.fileName);
+        if (unmatched.length) parts.push(`시간표에 같은 시각이 없어 연결하지 않은 파일: ${unmatched.join(', ')}`);
+      }
+      if (parts.length) setNotice(parts.join(' '));
+      if (failed.length) setError(`올리지 못한 파일: ${failed.join(' / ')}`);
     });
+
+  /** 엑셀(교시·구분·타종시간)로 시간표를 한 번에 채운다. 이미 올린 음원은 파일 이름의 시각으로 연결한다 */
+  const importExcel = (file: File) =>
+    run('import', async () => {
+      if (!/\.xlsx$/i.test(file.name)) throw new Error('엑셀(.xlsx) 파일만 가져올 수 있습니다');
+      const { default: readXlsxFile, readSheetNames } = await import('read-excel-file');
+      let sheet: string | null = null;
+      let rows: unknown[][] = [];
+      for (const name of await readSheetNames(file)) {
+        const r = (await readXlsxFile(file, { sheet: name })) as unknown[][];
+        if (looksLikeSchedule(r)) {
+          sheet = name;
+          rows = r;
+          break;
+        }
+      }
+      if (!sheet) throw new Error('시간표 시트를 찾지 못했습니다. 첫 줄에 "교시 · 구분 · 타종시간" 머리글이 있는 시트가 필요합니다.');
+      const { cues, notes } = parseScheduleRows(rows, () => newId());
+      if (draft?.length && !window.confirm(`편집 중인 시간표(${draft.length}개)를 엑셀 내용(${cues.length}개)으로 바꿀까요?`)) return;
+      const named = docs.filter(([id]) => assetIds.has(id)).map(([id, d]) => ({ id, fileName: d.fileName, uploadedAt: d.uploadedAt }));
+      const { cues: withAudio, assigned } = assignByFileName(cues, named);
+      setDraft(withAudio);
+      setImportNotes(notes);
+      setNotice(
+        `"${sheet}" 시트에서 방송 ${cues.length}개를 가져왔습니다. 음원 ${assigned}곳 연결, ${cues.length - assigned}곳은 음원이 필요합니다. ` +
+          '음원 파일 이름 앞에 시각을 붙여(예: 1710_한국사종료5분전.mp3) 올리면 해당 줄에 자동으로 연결됩니다. 모두 연결한 뒤 [저장]하세요.',
+      );
+    });
+
+  const importButton = () => (
+    <label className={`button ${disabled ? 'disabled' : ''}`} title="교시 · 구분 · 타종시간 머리글이 있는 엑셀(.xlsx)">
+      {busy === 'import' ? '가져오는 중…' : '📄 엑셀에서 가져오기'}
+      <input
+        type="file"
+        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        hidden
+        disabled={disabled}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (f) void importExcel(f);
+        }}
+      />
+    </label>
+  );
 
   const remove = (id: string, d: SchoolAssetDoc) => {
     if (!window.confirm(`"${d.label}" 음원을 삭제할까요?`)) return;
@@ -189,7 +303,9 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
       <section className="card">
         <h2>학교 음원</h2>
         <p className="muted small">
-          직접 녹음·제작한 안내 방송을 올립니다 (mp3·wav, 20MB 이하). 올린 음원은 아래 시간표에서 고를 수 있습니다.
+          직접 녹음·제작한 안내 방송을 올립니다 (mp3·wav, 20MB 이하, 여러 개 한 번에 가능). 파일 이름 앞에 시각을 붙이면(예:{' '}
+          <span className="mono">1710_한국사종료5분전.mp3</span>) 시간표의 같은 시각 줄에 자동으로 연결되고, 같은 시각 파일을 다시
+          올리면 새 파일로 바뀝니다.
           {neisCode === 'LOCAL' && ' 로컬 모드에서는 이 PC에만 저장됩니다.'}
         </p>
         <div className="row upload-row">
@@ -201,16 +317,17 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
             disabled={disabled}
           />
           <label className={`button ${disabled ? 'disabled' : ''}`}>
-            {busy === 'upload' ? '올리는 중…' : '＋ 음원 파일 올리기'}
+            {busy?.startsWith('upload') ? `올리는 중… ${busy.split(':')[1] ?? ''}` : '＋ 음원 파일 올리기'}
             <input
               type="file"
               accept=".mp3,.wav,audio/mpeg,audio/wav"
+              multiple
               hidden
               disabled={disabled}
               onChange={(e) => {
-                const f = e.target.files?.[0];
+                const fs = [...(e.target.files ?? [])];
                 e.target.value = '';
-                if (f) void upload(f);
+                if (fs.length) void upload(fs);
               }}
             />
           </label>
@@ -275,6 +392,16 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
         {locked && <div className="banner warn">자동 방송 중에는 시간표를 고칠 수 없습니다. 방송을 중지한 뒤 고치세요.</div>}
         {error && <div className="banner bad">{error}</div>}
         {notice && <div className="banner">{notice}</div>}
+        {importNotes.length > 0 && (
+          <div className="banner warn">
+            엑셀에서 가져오며 확인할 내용:
+            <ul>
+              {importNotes.map((n) => (
+                <li key={n}>{n}</li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {draft === null ? (
           <div className="edit-start">
@@ -289,6 +416,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
               <button onClick={startEmpty} disabled={disabled}>
                 빈 시간표로 시작
               </button>
+              {importButton()}
             </div>
           </div>
         ) : (
@@ -308,7 +436,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
                 </thead>
                 <tbody>
                   {draft.map((c) => (
-                    <tr key={c.id}>
+                    <tr key={c.id} className={c.assetId ? '' : 'no-audio'}>
                       <td>
                         <input
                           type="time"
@@ -431,11 +559,19 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
             </div>
             {check && (check.errors.length > 0 || check.warnings.length > 0) && (
               <ul className="edit-issues">
-                {check.errors.map((e) => (
-                  <li key={e} className="bad">
-                    {e}
+                {/* 음원 없는 줄은 한 줄로 묶는다 (엑셀로 가져온 직후 수십 줄이 표를 밀어내지 않게). 표에서 빨간 줄로 보인다 */}
+                {missingAudio.length > 0 && (
+                  <li className="bad">
+                    음원이 없는 방송 {missingAudio.length}곳 (표의 빨간 줄): {missingAudio.map((c) => c.time.slice(0, 5)).join(', ')}
                   </li>
-                ))}
+                )}
+                {check.errors
+                  .filter((e) => !/: 음원을 고르세요$/.test(e))
+                  .map((e) => (
+                    <li key={e} className="bad">
+                      {e}
+                    </li>
+                  ))}
                 {check.warnings.map((w) => (
                   <li key={w} className="warn">
                     {w}
@@ -447,6 +583,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
               <button onClick={addRow} disabled={disabled}>
                 ＋ 방송 추가
               </button>
+              {importButton()}
               <span className="spacer" />
               {saved && (
                 <button className="link danger-text" onClick={revert} disabled={disabled}>
@@ -456,6 +593,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
               <button
                 onClick={() => {
                   setDraft(saved ? structuredClone(saved) : null);
+                  setImportNotes([]);
                   setError(null);
                 }}
                 disabled={disabled || !dirty}
