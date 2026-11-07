@@ -33,6 +33,7 @@ import ScheduleEditor from './ScheduleEditor';
 import RunReports from './RunReports';
 import { clearReports, incidentsFrom, loadReports, outcomesFrom, saveReport, uploadReport, type RunReport } from '../core/runReports';
 import { LOW_BATTERY, powerText, usePower } from '../core/power';
+import { useAudioOutput } from '../core/audioOutput';
 
 const RESYNC_MS = 10 * 60_000;
 
@@ -69,6 +70,8 @@ export default function Player() {
   /** 방송 화면이 가려졌는가 (창 최소화·다른 탭) — 가려지면 화면 꺼짐 방지가 풀린다 */
   const [hidden, setHidden] = useState(() => document.visibilityState === 'hidden');
   const power = usePower();
+  /** 방송 소리 출력 장치 (앰프 쪽 장치로만 보내 다른 소리가 섞이지 않게) */
+  const output = useAudioOutput();
   /** 이 PC의 방송 회차별 결과 기록 */
   const [reports, setReports] = useState<RunReport[]>([]);
   const reportRef = useRef<RunReport | null>(null);
@@ -430,13 +433,14 @@ export default function Player() {
         runDate: s.runDate,
         wakeLock,
         hidden,
+        audioOutput: { label: output.choice?.label ?? '윈도우 기본 장치', level: output.status.level },
         power: power.level === null ? null : { level: Math.round(power.level * 100) / 100, charging: power.charging },
       });
     };
     send();
     const id = setInterval(send, HEARTBEAT_MS);
     return () => clearInterval(id);
-  }, [profile, channel, assetsReady, loadResult, unlocked, autoplayAllowed, sound, snap.armed, snap.mode, snap.alarms.length, next?.cue.id, clock.synced, clock.source, planHash, wakeLock, hidden, power.charging, power.level !== null && power.level < LOW_BATTERY]);
+  }, [profile, channel, assetsReady, loadResult, unlocked, autoplayAllowed, sound, snap.armed, snap.mode, snap.alarms.length, next?.cue.id, clock.synced, clock.source, planHash, wakeLock, hidden, output.status.level, output.choice?.deviceId, power.charging, power.level !== null && power.level < LOW_BATTERY]);
 
   // 10-1) 방송별 진행 상태를 보고 (관리자 화면의 학교 × 방송 표). 바뀔 때만 보낸다.
   const timelineSent = useRef('');
@@ -746,6 +750,12 @@ export default function Player() {
           : '이 기기·브라우저에서 지원 안 됨 — 아래 [절전 설정 방법]대로 기기 설정을 바꾸세요',
     },
     {
+      ok: output.status.level === 'ok',
+      warn: output.status.level === 'warn',
+      label: '출력 장치',
+      detail: output.status.text,
+    },
+    {
       ok: power.charging === true,
       warn: power.charging !== true && !(power.level !== null && power.level < LOW_BATTERY && power.charging === false),
       label: '전원',
@@ -945,8 +955,34 @@ export default function Player() {
                   />
                 </label>
               </div>
+              {output.supported && (
+                <div className="output-pick">
+                  <label className="row">
+                    <strong>출력 장치</strong>
+                    {output.devices ? (
+                      <select value={output.choice?.deviceId ?? ''} onChange={(e) => output.choose(e.target.value)}>
+                        <option value="">윈도우 기본 장치</option>
+                        {output.devices.map((d) => (
+                          <option key={d.deviceId} value={d.deviceId}>
+                            {d.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <button className="small" onClick={() => void output.requestList()}>
+                        장치 목록 불러오기
+                      </button>
+                    )}
+                  </label>
+                  <p className="muted small">
+                    방송 앰프에 연결된 장치를 고르면 방송 소리만 그쪽으로 나갑니다. 윈도우 기본 출력은 노트북 스피커로 두면 알림음 등 다른
+                    소리가 방송에 섞이지 않습니다. 처음 한 번 '마이크 사용' 허용 창이 뜹니다 (장치 이름 확인용, 마이크는 쓰지 않음). 고른 뒤
+                    [테스트 소리]로 확인하세요{snap.armed ? ' · 방송 중에 바꾸면 소리가 잠깐 끊길 수 있습니다' : ''}.
+                  </p>
+                </div>
+              )}
               <details className="power-help">
-                <summary>절전 설정 방법 (방송 PC·노트북·태블릿 필수)</summary>
+                <summary>절전·다른 소리 막기 설정 방법 (방송 PC·노트북·태블릿 필수)</summary>
                 <p className="muted small">
                   이 화면이 앞에 떠 있으면 화면 꺼짐을 막지만, 덮개를 닫거나 창을 최소화하면 막을 수 없습니다. 방송 전에 기기 설정을 함께
                   바꿔 두세요.
@@ -967,11 +1003,23 @@ export default function Player() {
                     <strong>공통</strong>: 전원 어댑터 연결, Windows 업데이트 자동 재시작 미루기, 브라우저 창은 최대화한 채로 두기
                   </li>
                 </ul>
+                <p className="muted small" style={{ marginTop: 8 }}>
+                  <strong>다른 소리 막기</strong> — 알림음·메신저·업데이트 소리가 교실 방송에 섞이지 않게:
+                </p>
+                <ul>
+                  <li>
+                    위의 <strong>출력 장치</strong>에서 앰프 쪽 장치를 고르고, 윈도우 기본 출력(작업 표시줄 스피커 아이콘)은 노트북 스피커로
+                  </li>
+                  <li>설정 → 시스템 → 알림: 알림 끄기 또는 방해 금지 켜기</li>
+                  <li>제어판 → 소리 → 소리 탭: 소리 구성표 "소리 없음"</li>
+                  <li>볼륨 믹서에서 브라우저 말고 다른 프로그램 볼륨 0, 메신저(쿨메신저·카카오톡 등)·백신 알림 끄기</li>
+                  <li>다른 브라우저 탭·동영상 닫기, Windows 업데이트 일시 중지</li>
+                </ul>
               </details>
               {sound === 'not-heard' && (
                 <ol className="help">
                   <li>방송 앰프 전원과 볼륨, 이 PC와 앰프를 잇는 케이블을 확인하세요.</li>
-                  <li>Windows 작업 표시줄 스피커 아이콘에서 음소거가 아닌지, 출력 장치가 앰프 쪽인지 확인하세요.</li>
+                  <li>Windows 작업 표시줄 스피커 아이콘에서 음소거가 아닌지 확인하고, 위의 [출력 장치]에서 앰프 쪽 장치를 골랐는지 확인하세요.</li>
                   <li>다시 [테스트 소리]를 눌러 보세요. 그래도 안 되면 교육지원청 담당자에게 연락하세요.</li>
                 </ol>
               )}

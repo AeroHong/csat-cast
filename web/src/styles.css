@@ -398,3 +398,7 @@ table.list tr.is-selected td { background: color-mix(in srgb, var(--primary) 10%
 .exam-delay-target { margin: 8px 0; }
 .exam-delay .big-time { font-size: 1.25rem; font-weight: 800; }
 .exam-delay .row button { padding: 6px 12px; }
+
+.output-pick { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.output-pick select { max-width: 340px; }
+.output-pick p { margin: 6px 0 0; }

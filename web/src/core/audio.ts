@@ -86,6 +86,17 @@ export class AudioEngine {
     if (this.master) this.master.gain.value = v;
   }
 
+  /**
+   * 방송 소리를 보낼 출력 장치 ('' = 윈도우 기본 장치). Chrome·Edge(AudioContext.setSinkId)만 지원.
+   * 예약해 둔 방송 시각은 그대로이고 소리만 다른 장치로 나간다.
+   */
+  async setOutput(deviceId: string): Promise<void> {
+    const ctx = this.ensureContext() as AudioContext & { setSinkId?: (id: string) => Promise<void>; sinkId?: string | object };
+    if (!ctx.setSinkId) return;
+    if ((typeof ctx.sinkId === 'string' ? ctx.sinkId : '') === deviceId) return;
+    await ctx.setSinkId(deviceId);
+  }
+
   /** 음원을 내려받아 두었는가 (재생하려면 prepare로 디코딩까지 끝나야 함) */
   has(assetId: string) {
     return this.bytes.has(assetId) && !this.decodeErrors.has(assetId);

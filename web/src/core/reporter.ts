@@ -48,6 +48,8 @@ export interface ChannelStatus {
   wakeLock?: boolean;
   /** 방송 화면이 가려졌는가 (창 최소화·다른 탭) */
   hidden?: boolean;
+  /** 방송 소리 출력 장치와 상태 (bad = 고른 장치가 빠져 기본 장치로 나감) */
+  audioOutput?: { label: string; level: 'ok' | 'warn' | 'bad' };
   /** 배터리 (브라우저가 알려 줄 때만). level 0~1 */
   power?: { level: number; charging: boolean | null } | null;
 }

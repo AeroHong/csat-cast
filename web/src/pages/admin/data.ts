@@ -160,6 +160,7 @@ export function judge(r: Omit<ChannelRow, 'health' | 'reasons'>, now: number): {
     if (s.power.level < 0.2) bad.push(`배터리 부족 ${pct} (전원 연결 필요)`);
     else warn.push(`배터리로 동작 중 ${pct} (전원 연결 권장)`);
   }
+  if (s.audioOutput?.level === 'bad') bad.push(`방송 출력 장치 "${s.audioOutput.label}" 없음 (기본 장치로 나감)`);
   if (r.online && s.hidden) warn.push('방송 화면이 가려짐 (창 최소화·다른 탭 — 절전으로 들어갈 수 있음)');
   else if (r.online && s.wakeLock === false) warn.push('화면 꺼짐 방지 꺼짐 (기기 절전 설정 확인)');
   if (r.timeline) {
