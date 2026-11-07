@@ -1,4 +1,9 @@
+import CampaignIcon from '@mui/icons-material/CampaignOutlined';
+import EditCalendarIcon from '@mui/icons-material/EditCalendarOutlined';
+import ScienceIcon from '@mui/icons-material/ScienceOutlined';
+import { Chip, MenuItem, TextField, Typography } from '@mui/material';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import AppShell, { type NavItem } from '../components/AppShell';
 import { useSearchParams } from 'react-router-dom';
 import { audioEngine, type LoadResult } from '../core/audio';
 import { usingEmulator } from '../core/firebase';
@@ -583,7 +588,75 @@ export default function Player() {
     },
   ];
 
+  const nav: NavItem<typeof tab>[] = [
+    {
+      key: 'live',
+      label: '실전 방송',
+      icon: <CampaignIcon fontSize="small" />,
+      badge: liveDay ? { label: '오늘', color: 'error' } : undefined,
+    },
+    {
+      key: 'test',
+      label: '테스트 · 리허설',
+      icon: <ScienceIcon fontSize="small" />,
+      badge:
+        snap.armed && snap.mode === 'test'
+          ? { label: '진행 중', color: 'warning' }
+          : upcomingRehearsals > 0
+            ? { label: `예약 ${upcomingRehearsals}` }
+            : undefined,
+    },
+    {
+      key: 'edit',
+      label: '시간표 편집',
+      icon: <EditCalendarIcon fontSize="small" />,
+      badge: custom ? { label: '학교', color: 'primary' } : undefined,
+    },
+  ];
+
   return (
+    <AppShell<typeof tab>
+      fill
+      subtitle={profile.name}
+      nav={nav}
+      active={tab}
+      onSelect={setTab}
+      title={profile.name}
+      status={
+        <>
+          {profile.channels.length > 1 ? (
+            <TextField
+              select
+              size="small"
+              value={channel?.id ?? ''}
+              onChange={(e) => setParams({ channel: e.target.value })}
+              disabled={snap.armed}
+              sx={{ minWidth: 160 }}
+            >
+              {profile.channels.map((c) => (
+                <MenuItem key={c.id} value={c.id}>
+                  {c.label}
+                </MenuItem>
+              ))}
+            </TextField>
+          ) : (
+            <Chip size="small" variant="outlined" label={channel?.label} />
+          )}
+          <Typography variant="body2" color="text.secondary" noWrap>
+            {custom ? '학교 시간표' : template?.name}
+          </Typography>
+          {session.localMode && <Chip size="small" label="로컬 모드" />}
+          {snap.mode !== 'idle' && (
+            <Chip size="small" color={snap.mode === 'live' ? 'error' : 'warning'} label={snap.mode === 'live' ? '실전 방송 중' : '테스트 중'} />
+          )}
+        </>
+      }
+      operator={session.operator}
+      email={session.user?.email}
+      onLogout={() => void session.logout()}
+      logoutDisabled={snap.armed}
+      logoutHint="자동 방송 중에는 로그아웃할 수 없습니다. 방송을 멈춘 뒤 로그아웃하세요."
+    >
     <div className="player">
       {snap.armed && !unlocked && (
         <button className="overlay" onClick={() => void unlockAudio()}>
@@ -592,48 +665,6 @@ export default function Player() {
         </button>
       )}
 
-      <header className="bar">
-        <div>
-          <strong>{profile.name}</strong>
-          {profile.channels.length > 1 ? (
-            <select value={channel?.id} onChange={(e) => setParams({ channel: e.target.value })} disabled={snap.armed}>
-              {profile.channels.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <span className="muted"> · {channel?.label}</span>
-          )}
-          <span className="muted"> · {custom ? '학교 시간표' : template?.name}</span>
-        </div>
-        <nav className="tabs" role="tablist" aria-label="화면 선택">
-          <button role="tab" aria-selected={tab === 'live'} className={tab === 'live' ? 'active' : ''} onClick={() => setTab('live')}>
-            실전 방송
-            {liveDay && <span className="tag live">오늘</span>}
-          </button>
-          <button role="tab" aria-selected={tab === 'test'} className={tab === 'test' ? 'active' : ''} onClick={() => setTab('test')}>
-            테스트 · 리허설
-            {snap.armed && snap.mode === 'test' ? (
-              <span className="tag test">진행 중</span>
-            ) : (
-              upcomingRehearsals > 0 && <span className="tag">예약 {upcomingRehearsals}</span>
-            )}
-          </button>
-          <button role="tab" aria-selected={tab === 'edit'} className={tab === 'edit' ? 'active' : ''} onClick={() => setTab('edit')}>
-            시간표 편집
-            {custom && <span className="tag">학교 시간표</span>}
-          </button>
-        </nav>
-        <div className="bar-right">
-          {session.localMode && <span className="tag">로컬 모드</span>}
-          {snap.mode !== 'idle' && <span className={`tag ${snap.mode}`}>{snap.mode === 'live' ? '실전' : '테스트'}</span>}
-          <button className="link" onClick={() => void session.logout()} disabled={snap.armed}>
-            로그아웃
-          </button>
-        </div>
-      </header>
 
       <div className="player-body">
         <div className="col-side">
@@ -966,6 +997,7 @@ export default function Player() {
         </div>
       </div>
     </div>
+    </AppShell>
   );
 }
 

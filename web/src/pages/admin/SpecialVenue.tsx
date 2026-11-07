@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { cellState, formatDrift } from '../../core/board';
 import { kstTime } from '../../core/scheduler';
 import { CELL_LABEL, CellBox, cellTitle } from './LiveBoard';
@@ -11,6 +12,15 @@ export default function SpecialVenue({ row: r, now }: { row: ChannelRow; now: nu
   const playing = list.find((x) => x.cell.kind === 'playing');
   const next = rowNext(r, now);
   const venue = r.school?.venueType || '별도 운영 시험장';
+
+  // 송출 중이거나 다음에 나갈 방송이 목록 위쪽에 보이도록 세로 스크롤
+  const focusKey = (playing ?? list.find((x) => x.cell.kind === 'soon' || x.cell.kind === 'pending'))?.key;
+  const listRef = useRef<HTMLOListElement>(null);
+  useEffect(() => {
+    const box = listRef.current;
+    const li = focusKey ? box?.querySelector<HTMLElement>(`li[data-key="${CSS.escape(focusKey)}"]`) : null;
+    if (box && li) box.scrollTo({ top: Math.max(0, li.offsetTop - 2 * li.offsetHeight), behavior: 'smooth' });
+  }, [focusKey]);
 
   return (
     <section className={`special card h-${r.health}`}>
@@ -55,15 +65,21 @@ export default function SpecialVenue({ row: r, now }: { row: ChannelRow; now: nu
       </ul>
 
       {list.length > 0 ? (
-        <ol className="special-timeline">
+        <ol className="special-timeline" ref={listRef}>
           {list.map((x) => (
-            <li key={x.key} className={`k-${x.cell.kind}`}>
-              <span className="mono">{x.time}</span>
+            <li
+              key={x.key}
+              data-key={x.key}
+              className={`k-${x.cell.kind} ${x.key === focusKey ? 'is-focus' : ''}`}
+              title={`${x.period} ${x.label}\n${x.entry?.t ? `${kstTime(x.entry.t)} 시작 (${formatDrift(x.cell.driftMs)})` : CELL_LABEL[x.cell.kind]}`}
+            >
+              <span className="mono">{x.time.slice(0, 5)}</span>
               <CellBox cell={x.cell} title={cellTitle(r.name, x.cell, x.entry)} />
-              <span className="muted">{x.period}</span>
-              <span>{x.label}</span>
-              <span className="muted small">
-                {x.entry?.t ? `${kstTime(x.entry.t)} 시작 (${formatDrift(x.cell.driftMs)})` : r.armed ? CELL_LABEL[x.cell.kind] : ''}
+              <span className="st-label">
+                <span className="muted">{x.period}</span> {x.label}
+              </span>
+              <span className="muted small st-result">
+                {x.entry?.t ? formatDrift(x.cell.driftMs) : r.armed ? CELL_LABEL[x.cell.kind] : ''}
               </span>
             </li>
           ))}

@@ -1,4 +1,4 @@
-import { Fragment, useMemo } from 'react';
+import { Fragment, useEffect, useMemo, useRef } from 'react';
 import { buildColumns, formatDrift, type Cell, type CellKind, type TimelineEntry } from '../../core/board';
 import { kstTime } from '../../core/scheduler';
 import type { Cue } from '../../core/types';
@@ -72,10 +72,20 @@ export default function LiveBoard({ rows, now }: { rows: ChannelRow[]; now: numb
     return out;
   }, [columns]);
 
+  // 다음 방송 열이 바뀌면 그 열이 보이도록 가로 스크롤 (사람이 스크롤한 위치는 다음 열이 바뀔 때까지 유지)
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const box = scrollRef.current;
+    const th = box?.querySelector<HTMLElement>('th.time.is-next');
+    const sticky = box?.querySelector<HTMLElement>('thead th.sticky');
+    if (!box || !th) return;
+    box.scrollTo({ left: Math.max(0, th.offsetLeft - (sticky?.offsetWidth ?? 0) - 3 * th.offsetWidth), behavior: 'smooth' });
+  }, [nextTime, rows.length > 0]);
+
   if (!rows.length) return <p className="muted">표시할 시험장이 없습니다.</p>;
 
   return (
-    <div className="matrix-scroll">
+    <div className="matrix-scroll" ref={scrollRef}>
       <table className="matrix">
         <thead>
           <tr>
@@ -106,18 +116,27 @@ export default function LiveBoard({ rows, now }: { rows: ChannelRow[]; now: numb
             return (
               <Fragment key={`${r.code}/${r.ch}`}>
                 <tr className={`h-${r.health}`}>
-                  <th className="sticky school" title={r.reasons.join('\n')}>
-                    <div className="school-name">
+                  <th
+                    className="sticky school"
+                    title={[
+                      `${r.name}${r.ch !== 'main' ? ` · ${r.label}` : ''}`,
+                      r.typeNo ? `유형 ${r.typeNo}` : r.customSchedule ? '자체 시간표' : '유형 미지정',
+                      r.s?.operator ? `운영: ${r.s.operator}` : '',
+                      ...r.reasons,
+                    ]
+                      .filter(Boolean)
+                      .join('\n')}
+                  >
+                    <div className="school-line">
                       {r.examNo ? <span className="no">{String(r.examNo).padStart(2, '0')}</span> : null}
-                      {r.name}
-                      {r.ch !== 'main' && <span className="muted"> · {r.label}</span>}
-                    </div>
-                    <div className="school-meta muted">
-                      {r.typeNo ? `유형 ${r.typeNo}` : r.customSchedule ? '자체 시간표' : '유형 미지정'}
+                      <span className="school-name">
+                        {r.name.replace(/고등학교$/, '고')}
+                        {r.ch !== 'main' && <span className="muted"> · {r.label}</span>}
+                      </span>
+                      <span className="school-type muted">{r.typeNo ? `유형${r.typeNo}` : r.customSchedule ? '자체' : '미지정'}</span>
                       {r.s?.mode && r.s.mode !== 'idle' && <span className={`tag ${r.s.mode}`}>{r.s.mode === 'live' ? '실전' : '테스트'}</span>}
-                      {r.s?.operator && ` · ${r.s.operator}`}
+                      <span className={`school-reason ${r.health}`}>{r.reasons[0]}</span>
                     </div>
-                    <div className={`school-reason ${r.health}`}>{r.reasons[0]}</div>
                   </th>
                   {columns.map((c) => {
                     const x = cells.get(c.time);

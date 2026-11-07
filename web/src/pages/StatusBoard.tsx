@@ -1,4 +1,9 @@
+import HistoryIcon from '@mui/icons-material/HistoryOutlined';
+import HowToRegIcon from '@mui/icons-material/HowToRegOutlined';
+import SensorsIcon from '@mui/icons-material/SensorsOutlined';
+import { Chip } from '@mui/material';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import AppShell, { type NavItem } from '../components/AppShell';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { nextAcross } from '../core/board';
 import { fb } from '../core/firebase';
@@ -31,6 +36,9 @@ export default function StatusBoard() {
     return onSnapshot(query(collection(fb.db, 'accessRequests'), where('status', '==', 'pending')), (s) => setPendingCount(s.size));
   }, []);
 
+  // 상태판을 떠나면 탭 제목('(n) 문제 …')을 되돌린다
+  useEffect(() => () => void (document.title = '수능 방송 스케줄러'), []);
+
   const rows = useMemo(() => buildRows(data, mode), [data.status, data.presence, data.schools, data.templates, now, mode]);
   const special = rows.filter((r) => r.special);
   const general = rows.filter((r) => !r.special);
@@ -62,35 +70,45 @@ export default function StatusBoard() {
     );
   const shownGeneral = sortRows(onlyProblems ? general.filter((r) => r.health !== 'ok') : general);
 
-  return (
-    <div className="board">
-      <header className="bar">
-        <strong>수능 방송 관리 — 제13시험지구</strong>
-        <nav className="tabs" role="tablist">
-          <button role="tab" aria-selected={tab === 'live'} className={tab === 'live' ? 'active' : ''} onClick={() => setTab('live')}>
-            송출 현황
-            {count('bad') > 0 && <span className="tag live">{count('bad')}</span>}
-          </button>
-          <button role="tab" aria-selected={tab === 'access'} className={tab === 'access' ? 'active' : ''} onClick={() => setTab('access')}>
-            사용 신청·학교 관리
-            {pendingCount > 0 && <span className="tag test">{pendingCount}</span>}
-          </button>
-          <button role="tab" aria-selected={tab === 'logs'} className={tab === 'logs' ? 'active' : ''} onClick={() => setTab('logs')}>
-            송출 기록
-          </button>
-        </nav>
-        <div className="bar-right">
-          <span className="mono big-clock">{kstTime(now)}</span>
-          {!connected && <span className="tag live">서버 연결 끊김 — 화면이 최신이 아님</span>}
-          <span className="muted small">{session.operator}</span>
-          <button className="link" onClick={() => void session.logout()}>
-            로그아웃
-          </button>
-        </div>
-      </header>
+  const nav: NavItem<Tab>[] = [
+    {
+      key: 'live',
+      label: '송출 현황',
+      icon: <SensorsIcon fontSize="small" />,
+      badge: count('bad') > 0 ? { label: count('bad'), color: 'error' } : undefined,
+    },
+    {
+      key: 'access',
+      label: '사용 신청·학교 관리',
+      icon: <HowToRegIcon fontSize="small" />,
+      badge: pendingCount > 0 ? { label: pendingCount, color: 'warning' } : undefined,
+    },
+    { key: 'logs', label: '송출 기록', icon: <HistoryIcon fontSize="small" /> },
+  ];
 
+  return (
+    <AppShell<Tab>
+      subtitle="제13시험지구 · 교육지원청"
+      nav={nav}
+      active={tab}
+      onSelect={setTab}
+      status={
+        connected ? (
+          <Chip size="small" variant="outlined" color="success" label="서버 연결됨" />
+        ) : (
+          <Chip size="small" color="error" label="서버 연결 끊김 — 화면이 최신이 아님" />
+        )
+      }
+      right={<span className="mono big-clock">{kstTime(now)}</span>}
+      operator={session.operator}
+      email={session.user?.email}
+      onLogout={() => void session.logout()}
+    >
+    <div className="board">
       {tab === 'live' && (
         <>
+          <div className={`live-layout ${special.length ? 'has-side' : ''}`}>
+            <div className="live-main">
           <div className="summary">
             <div className="sum ok">정상 {count('ok')}</div>
             <div className="sum warn">주의 {count('warn')}</div>
@@ -138,28 +156,35 @@ export default function StatusBoard() {
             </label>
           </div>
 
-          {special.map((r) => (
-            <SpecialVenue key={`${r.code}/${r.ch}`} row={r} now={now} />
-          ))}
+              <section className="card">
+                <h2>일반 시험장 {general.length}곳</h2>
+                <LiveBoard rows={shownGeneral} now={now} />
+                <CellLegend />
+              </section>
 
-          <section className="card">
-            <h2>일반 시험장 {general.length}곳</h2>
-            <LiveBoard rows={shownGeneral} now={now} />
-            <CellLegend />
-          </section>
+              <ProblemList rows={sortRows(rows.filter((r) => r.health === 'bad' || r.health === 'warn'))} />
 
-          <ProblemList rows={sortRows(rows.filter((r) => r.health === 'bad' || r.health === 'warn'))} />
+              <p className="muted small footnote">
+                이 화면은 학교 PC가 보내는 보고를 보여 주기만 합니다. 이 화면을 닫거나 인터넷이 끊겨도 학교 방송에는 영향이 없습니다.
+                학교 PC는 서버 시각에 맞춰 스스로 송출하고, 보고가 늦으면 15초 뒤 '송출 보고 없음'으로 표시됩니다.
+              </p>
+            </div>
 
-          <p className="muted small footnote">
-            이 화면은 학교 PC가 보내는 보고를 보여 주기만 합니다. 이 화면을 닫거나 인터넷이 끊겨도 학교 방송에는 영향이 없습니다.
-            학교 PC는 서버 시각에 맞춰 스스로 송출하고, 보고가 늦으면 15초 뒤 '송출 보고 없음'으로 표시됩니다.
-          </p>
+            {special.length > 0 && (
+              <aside className="live-side">
+                {special.map((r) => (
+                  <SpecialVenue key={`${r.code}/${r.ch}`} row={r} now={now} />
+                ))}
+              </aside>
+            )}
+          </div>
         </>
       )}
 
       {tab === 'access' && <AccessAdmin schools={data.schools} rows={rows} templates={data.templates} />}
       {tab === 'logs' && <PlayLogs schools={data.schools} now={now} />}
     </div>
+    </AppShell>
   );
 }
 

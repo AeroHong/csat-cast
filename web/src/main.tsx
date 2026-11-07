@@ -8,6 +8,7 @@ import Login from './pages/Login';
 import Player from './pages/Player';
 import StatusBoard from './pages/StatusBoard';
 import './styles.css';
+import { AppThemeProvider } from './theme';
 
 initUpdates();
 
@@ -40,6 +41,7 @@ function RequestGuard() {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    <AppThemeProvider>
     <SessionProvider>
       <BrowserRouter>
         <Routes>
@@ -52,5 +54,6 @@ createRoot(document.getElementById('root')!).render(
         </Routes>
       </BrowserRouter>
     </SessionProvider>
+    </AppThemeProvider>
   </StrictMode>,
 );

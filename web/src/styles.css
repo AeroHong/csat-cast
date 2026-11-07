@@ -1,10 +1,11 @@
 :root {
-  --bg: #f4f6fa;
+  /* theme.tsx(MUI)와 같은 색 — 수능 방송용 남색·파랑. <html data-theme>로 밝은/어두운 화면을 바꾼다 */
+  --bg: #f3f5f9;
   --panel: #ffffff;
   --text: #0f172a;
-  --muted: #64748b;
+  --muted: #5b6b82;
   --line: #e2e8f0;
-  --primary: #1d4ed8;
+  --primary: #1e40af;
   --ok: #16a34a;
   --warn: #d97706;
   --bad: #dc2626;
@@ -12,25 +13,28 @@
   --ok-bg: #dcfce7;
   --warn-bg: #fef3c7;
   --bad-bg: #fee2e2;
-  font-family: 'Pretendard', 'Malgun Gothic', system-ui, sans-serif;
+  /* FHD(1920×1080) 기준 고정 */
+  font-size: 16px;
+  font-family: 'Pretendard Variable', Pretendard, 'Malgun Gothic', 'Apple SD Gothic Neo', system-ui, sans-serif;
   color: var(--text);
   background: var(--bg);
+  color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0b1120;
-    --panel: #111827;
-    --text: #e5e7eb;
-    --muted: #94a3b8;
-    --line: #1f2937;
-    --primary: #3b82f6;
-    --ok-bg: #052e16;
-    --warn-bg: #3b2a06;
-    --bad-bg: #3f0d0d;
-  }
+:root[data-theme='dark'] {
+  --bg: #0f1b2d;
+  --panel: #16263d;
+  --text: #eef3fa;
+  --muted: #9fb1c9;
+  --line: #2a3f5f;
+  --primary: #4f7cf0;
+  --none: #64748b;
+  --ok-bg: #0b3320;
+  --warn-bg: #3b2a06;
+  --bad-bg: #451414;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); }
+body { margin: 0; background: var(--bg); font-feature-settings: 'tnum' 1; -webkit-font-smoothing: antialiased; }
 h1, h2 { margin: 0 0 12px; }
 h2 { font-size: 1.1rem; }
 .muted { color: var(--muted); }
@@ -52,12 +56,10 @@ button.small { padding: 4px 10px; font-size: 0.85rem; }
 button.link { border: none; background: none; color: var(--muted); text-decoration: underline; }
 input, select { font: inherit; padding: 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
 input[type='number'] { width: 80px; }
-label { display: flex; flex-direction: column; gap: 4px; }
+label:not([class*="Mui"]) { display: flex; flex-direction: column; gap: 4px; }
 label.row { flex-direction: row; }
 label.radio { flex-direction: row; align-items: flex-start; gap: 8px; padding: 4px 0; cursor: pointer; }
 label.radio input { margin-top: 3px; }
-.situation fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 0 0 10px; }
-.situation legend { font-weight: 600; padding: 0 4px; }
 
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 12px 0; }
 .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; background: var(--line); margin-left: 6px; }
@@ -78,8 +80,6 @@ canvas.spectrum { display: block; width: 100%; height: 72px; border-radius: 6px;
 .dur-over { color: var(--bad); font-weight: 600; }
 .banner.bad { background: var(--bad-bg); color: var(--text); border: 2px solid var(--bad); font-weight: 600; }
 
-.login { max-width: 420px; margin: 8vh auto; padding: 0 16px; }
-.login form, .login .card { display: flex; flex-direction: column; gap: 12px; }
 
 .bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .bar select { margin-left: 8px; }
@@ -110,7 +110,7 @@ canvas.spectrum { display: block; width: 100%; height: 72px; border-radius: 6px;
  * - 1200px 이상(FHD 등): 화면 전체 너비·높이를 쓰는 2열. 왼쪽은 상태·제어, 오른쪽은 시간표.
  *   페이지는 한 화면에 고정하고 각 열이 따로 스크롤된다.
  */
-.player { padding: 0 16px 24px; }
+.player { padding: 0; }
 .player-body { display: grid; gap: 0 16px; }
 .timetable-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
 .timetable-head h2 { margin: 0; }
@@ -145,8 +145,8 @@ canvas.spectrum { display: block; width: 100%; height: 72px; border-radius: 6px;
 .events .warn { color: var(--warn); }
 .events .error { color: var(--bad); }
 
-.board { padding: 0 16px 48px; }
-.summary { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 16px 0; }
+.board { padding: 0; }
+.summary { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; }
 .sum { padding: 8px 14px; border-radius: 8px; font-weight: 700; }
 .sum.ok { background: var(--ok-bg); color: var(--ok); }
 .sum.warn { background: var(--warn-bg); color: var(--warn); }
@@ -232,8 +232,8 @@ label.inline select { padding: 4px 6px; }
 
 /* 넓은 화면 2열 레이아웃 (기본 규칙을 덮어쓰도록 맨 끝에 둔다) */
 @media (min-width: 1200px) {
-  .player { height: 100vh; display: flex; flex-direction: column; padding-bottom: 12px; overflow: hidden; }
-  .player > .bar { flex: none; }
+  /* AppShell(fill) 본문 높이를 채운다 */
+  .player { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
   .player-body { flex: 1; min-height: 0; grid-template-columns: clamp(380px, 28vw, 520px) minmax(0, 1fr); }
   .col-side { min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 4px; }
   .col-main { min-height: 0; display: flex; flex-direction: column; }
@@ -256,10 +256,6 @@ label.inline select { padding: 4px 6px; }
 }
 
 /* ───────── 로그인·사용 신청 ───────── */
-.login .steps { margin: 0; padding-left: 20px; line-height: 1.7; font-size: 0.9rem; }
-.login details.admin-login { border-top: 1px solid var(--line); padding-top: 10px; }
-.login details.admin-login summary { cursor: pointer; font-size: 0.9rem; }
-.login details.admin-login form { margin-top: 10px; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; font-weight: 600; }
@@ -274,21 +270,24 @@ label.inline select { padding: 4px 6px; }
 
 /* 학교 × 방송 시각 표 */
 .matrix-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
-table.matrix { border-collapse: separate; border-spacing: 0; font-size: 0.8rem; min-width: 100%; }
+table.matrix { border-collapse: separate; border-spacing: 0; font-size: 0.8rem; line-height: 1.25; min-width: 100%; }
 .matrix th, .matrix td { border-bottom: 1px solid var(--line); padding: 3px 2px; text-align: center; white-space: nowrap; }
 .matrix thead th { background: var(--panel); position: sticky; top: 0; z-index: 1; }
 .matrix th.period { font-weight: 600; border-left: 1px solid var(--line); color: var(--muted); }
 .matrix th.time { font-weight: 500; font-variant-numeric: tabular-nums; writing-mode: vertical-rl; transform: rotate(180deg); padding: 4px 2px; height: 46px; }
 .matrix .is-next { background: color-mix(in srgb, var(--primary) 14%, transparent); }
-.matrix th.sticky { position: sticky; left: 0; z-index: 2; background: var(--panel); text-align: left; padding: 4px 10px; min-width: 210px; max-width: 260px; border-right: 1px solid var(--line); }
-.matrix tbody th.school { border-left: 5px solid var(--none); white-space: normal; }
+.matrix th.sticky { position: sticky; left: 0; z-index: 2; background: var(--panel); text-align: left; padding: 4px 10px; min-width: 300px; border-right: 1px solid var(--line); }
+.matrix tbody th.school { border-left: 5px solid var(--none); padding: 2px 10px; width: 300px; min-width: 300px; max-width: 300px; }
 .matrix tr.h-ok th.school { border-left-color: var(--ok); }
 .matrix tr.h-warn th.school { border-left-color: var(--warn); }
 .matrix tr.h-bad th.school { border-left-color: var(--bad); background: var(--bad-bg); }
-.matrix .school-name { font-weight: 700; font-size: 0.9rem; }
-.matrix .school-name .no { display: inline-block; min-width: 1.8em; color: var(--muted); font-variant-numeric: tabular-nums; }
-.matrix .school-meta { font-size: 0.75rem; }
-.matrix .school-reason { font-size: 0.75rem; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 학교 한 칸 = 한 줄: 번호 · 이름 · 유형 · (실전/테스트) · 상태 */
+.matrix .school-line { display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; }
+.matrix .school-line .no { flex: none; min-width: 1.6em; color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 600; }
+.matrix .school-name { flex: none; font-weight: 700; font-size: 0.9rem; }
+.matrix .school-type { flex: none; font-size: 0.72rem; font-weight: 400; }
+.matrix .school-line .tag { flex: none; }
+.matrix .school-reason { flex: 1 1 auto; min-width: 0; font-size: 0.75rem; font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
 .matrix .school-reason.bad { color: var(--bad); font-weight: 600; }
 .matrix .school-reason.warn { color: var(--warn); }
 .matrix .school-reason.ok { color: var(--ok); }
@@ -315,17 +314,35 @@ table.matrix { border-collapse: separate; border-spacing: 0; font-size: 0.8rem; 
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 0.8rem; color: var(--muted); }
 .legend > span { display: inline-flex; align-items: center; gap: 4px; }
 
+/* 송출 현황: 일반 시험장(본문) + 별도 운영 시험장(우측 사이드) */
+.live-layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+.live-main, .live-side { min-width: 0; }
+.live-main > .card:first-child, .live-side > .card:first-child { margin-top: 0; }
+@media (min-width: 1200px) {
+  .live-layout.has-side { grid-template-columns: minmax(0, 1fr) 380px; }
+  /* 사이드는 화면 높이에 맞추고, 방송 목록만 안에서 스크롤 */
+  .live-side { position: sticky; top: 0; max-height: calc(100vh - 3.75rem - 2.5rem); display: flex; flex-direction: column; }
+  .live-side > .special { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .live-side .special-head { flex-direction: column; gap: 8px; }
+  .live-side .special-now { text-align: left; }
+  .live-side ol.special-timeline { flex: 1; min-height: 6rem; max-height: none; }
+}
+
 /* 별도 운영 시험장 (경증 시각장애 1.5배) */
 .special { border: 2px solid var(--primary); }
 .special.h-bad { border-color: var(--bad); }
 .special-head { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
 .special-head h2 { margin: 2px 0 4px; font-size: 1.3rem; }
 .special-kicker { font-size: 0.8rem; font-weight: 700; color: var(--primary); letter-spacing: 0.02em; }
-.special-now { text-align: right; min-width: 260px; }
+.special-now { text-align: right; }
 .special-now .big-line { font-size: 1.3rem; font-weight: 800; }
 .reasons.bad li:first-child { color: var(--bad); font-weight: 600; }
-ol.special-timeline { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 2px 16px; }
-.special-timeline li { display: grid; grid-template-columns: 70px 28px 70px 1fr auto; gap: 8px; align-items: center; padding: 3px 4px; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+/* 방송 하나 = 한 줄, 세로 스크롤 (지금·다음 방송으로 자동 이동) */
+ol.special-timeline { position: relative; list-style: none; margin: 8px 0 0; padding: 0; max-height: 60vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
+.special-timeline li { display: grid; grid-template-columns: 44px 26px minmax(0, 1fr) auto; gap: 6px; align-items: center; padding: 3px 8px; border-bottom: 1px solid var(--line); font-size: 0.85rem; white-space: nowrap; }
+.special-timeline li:last-child { border-bottom: 0; }
+.special-timeline .st-label { overflow: hidden; text-overflow: ellipsis; }
+.special-timeline li.is-focus { outline: 2px solid var(--primary); outline-offset: -2px; }
 .special-timeline li.k-playing { background: color-mix(in srgb, var(--primary) 12%, transparent); }
 .special-timeline li.k-missing, .special-timeline li.k-failed { background: var(--bad-bg); }
 .tag.special-tag { background: var(--primary); color: #fff; }
