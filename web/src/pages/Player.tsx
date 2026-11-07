@@ -1087,7 +1087,7 @@ export default function Player() {
             />
           )}
 
-          {snap.events.length > 0 && (
+          {tab !== 'edit' && snap.events.length > 0 && (
             <section className="card">
               <h2>기록</h2>
               <ul className="events">
