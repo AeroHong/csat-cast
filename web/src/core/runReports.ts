@@ -2,6 +2,8 @@
  * 방송 회차별 결과 기록 (테스트·리허설·실전). 이 PC(localStorage)에 최근 30회를 남긴다.
  * 담당자가 여러 번 테스트해 본 뒤 "늘 같은 방송이 늦다 / 화면이 자꾸 꺼진다" 같은 반복 문제를 찾기 위함.
  */
+import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { fb } from './firebase';
 import type { PlayerEvent, PlayerSnapshot } from './player';
 import type { RunMode } from './types';
 
@@ -168,4 +170,22 @@ export function clearReports(school: string, channel: string) {
   } catch {
     /* 무시 */
   }
+}
+
+/** 서버에 올린 결과 기록 (관리자 화면에서 학교별로 봄) */
+export interface ServerRunReport extends RunReport {
+  school: string;
+  channel: string;
+  schoolName: string;
+  channelLabel: string;
+  operator: string;
+}
+
+/** 관리자 화면에서 볼 수 있게 서버에도 올린다 (로컬 모드는 올리지 않음). 실패해도 방송에는 영향 없음 */
+export function uploadReport(r: RunReport, info: Omit<ServerRunReport, keyof RunReport>) {
+  if (!fb || info.school === 'LOCAL') return;
+  const data = JSON.parse(JSON.stringify({ ...r, ...info })) as ServerRunReport;
+  void setDoc(doc(fb.db, 'runReports', `${info.school}_${info.channel}_${r.id}`), { ...data, updatedAt: serverTimestamp() }).catch(
+    () => undefined,
+  );
 }

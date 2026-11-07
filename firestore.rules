@@ -67,6 +67,16 @@ service cloud.firestore {
       }
     }
 
+    // 방송 결과 기록(테스트·리허설·실전 회차별): 학교 PC가 자기 학교 기록만 만들고 진행 중 갱신한다. 관리자는 읽기만. 삭제 불가
+    // 문서 id = {학교}_{채널}_{회차 id}
+    match /runReports/{id} {
+      allow read: if isAdmin() || (signedIn() && isSchool(resource.data.school));
+      allow create, update: if isSchool(request.resource.data.school)
+        && id == request.resource.data.school + '_' + request.resource.data.channel + '_' + request.resource.data.id
+        && (resource == null || resource.data.school == request.resource.data.school);
+      allow delete: if false;
+    }
+
     // 재생 기록: 학교는 자기 학교 기록만 추가, 수정·삭제 불가
     match /playLogs/{id} {
       allow create: if isSchool(request.resource.data.school);

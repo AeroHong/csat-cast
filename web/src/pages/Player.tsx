@@ -31,7 +31,7 @@ import NowPlayingDetail, { formatDuration, useNowPlaying } from './NowPlaying';
 import RehearsalScheduler, { shortDate } from './RehearsalScheduler';
 import ScheduleEditor from './ScheduleEditor';
 import RunReports from './RunReports';
-import { clearReports, incidentsFrom, loadReports, outcomesFrom, saveReport, type RunReport } from '../core/runReports';
+import { clearReports, incidentsFrom, loadReports, outcomesFrom, saveReport, uploadReport, type RunReport } from '../core/runReports';
 import { LOW_BATTERY, powerText, usePower } from '../core/power';
 
 const RESYNC_MS = 10 * 60_000;
@@ -75,6 +75,8 @@ export default function Player() {
   const prevArmedRef = useRef(false);
   /** 지금 시작하는 방송의 이름 (결과 기록용) */
   const runLabelRef = useRef<string | null>(null);
+  /** 결과 기록을 서버에 마지막으로 올린 시각·회차 (진행 중에는 15초에 한 번만) */
+  const uploadedRef = useRef<{ id: string; at: number; ended: boolean } | null>(null);
   const [volume, setVolume] = useState(1);
   const [delaySec, setDelaySec] = useState(10);
   const [speed, setSpeed] = useState(1);
@@ -530,7 +532,18 @@ export default function Player() {
     } else return;
     reportRef.current = r;
     setReports(saveReport(neisCode, channel.id, r));
+    syncReport(r);
   }, [snap, channel?.id]);
+
+  /** 관리자 화면용으로 서버에 올린다: 새 회차·마감은 바로, 진행 중에는 15초에 한 번 */
+  function syncReport(r: RunReport, force = false) {
+    if (!channel || !profile) return;
+    const u = uploadedRef.current;
+    const ended = r.endedAt !== null;
+    if (!force && u && u.id === r.id && u.ended === ended && Date.now() - u.at < 15_000) return;
+    uploadedRef.current = { id: r.id, at: Date.now(), ended };
+    uploadReport(r, { school: neisCode, channel: channel.id, schoolName: profile.name, channelLabel: channel.label, operator: session.operator });
+  }
 
   /** 방송 중 생긴 PC 환경 문제(화면 가려짐·전원 분리 등)를 이 회차 기록에 남긴다 */
   function addIncident(message: string, level: 'warn' | 'error' = 'warn') {
@@ -539,6 +552,7 @@ export default function Player() {
     const next = { ...r, incidents: [...r.incidents, { at: serverClock.now(), level, message }] };
     reportRef.current = next;
     setReports(saveReport(neisCode, channel.id, next));
+    syncReport(next, true);
   }
   useEffect(() => {
     if (hidden) addIncident('방송 화면이 가려짐 (창 최소화·다른 탭) — 화면 꺼짐 방지가 풀립니다');

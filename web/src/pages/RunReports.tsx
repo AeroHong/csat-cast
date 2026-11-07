@@ -7,15 +7,29 @@ const PROBLEM: Outcome[] = ['late', 'manual', 'skipped', 'failed', 'missed'];
 const drift = (ms: number | null) => (ms === null ? '' : `${ms >= 0 ? '+' : ''}${(ms / 1000).toFixed(ms < 10_000 && ms > -10_000 ? 2 : 0)}초`);
 
 /** 방송 회차별 결과 (테스트·리허설·실전) + 여러 번 반복된 문제 */
-export default function RunReports({ reports, onClear }: { reports: RunReport[]; onClear: () => void }) {
+export default function RunReports({
+  reports,
+  onClear,
+  title = '방송 결과 기록',
+  subtitle = '이 PC에서 진행한 테스트·리허설·실전 방송 (최근 30회)',
+  prefix,
+}: {
+  reports: RunReport[];
+  /** 없으면 지우기 버튼을 숨긴다 (관리자 화면) */
+  onClear?: () => void;
+  title?: string;
+  subtitle?: string;
+  /** 회차 이름 앞에 붙일 말 (관리자 화면: 채널 이름·운영자) */
+  prefix?: (r: RunReport) => string;
+}) {
   const [open, setOpen] = useState<string | null>(reports[0]?.id ?? null);
   const repeated = recurring(reports);
 
   return (
     <section className="card run-reports">
       <div className="timetable-head">
-        <h2>방송 결과 기록</h2>
-        <span className="muted small">이 PC에서 진행한 테스트·리허설·실전 방송 (최근 30회)</span>
+        <h2>{title}</h2>
+        <span className="muted small">{subtitle}</span>
       </div>
       {reports.length === 0 ? (
         <p className="muted">아직 기록이 없습니다. 리허설을 한 번 진행하면 여기에 결과가 남습니다.</p>
@@ -45,7 +59,10 @@ export default function RunReports({ reports, onClear }: { reports: RunReport[];
                       {kstDate(r.startedAt).slice(5)} {kstTime(r.startedAt).slice(0, 5)}
                     </span>
                     <span className={`tag ${r.mode}`}>{r.mode === 'live' ? '실전' : '테스트'}</span>
-                    <span className="run-label">{r.label}</span>
+                    <span className="run-label">
+                      {prefix?.(r)}
+                      {r.label}
+                    </span>
                     <span className="run-result">
                       {running
                         ? '진행 중'
@@ -98,17 +115,19 @@ export default function RunReports({ reports, onClear }: { reports: RunReport[];
               );
             })}
           </ul>
+          {onClear && (
           <div className="row">
             <span className="spacer" />
             <button
               className="link"
               onClick={() => {
-                if (window.confirm('이 PC의 방송 결과 기록을 모두 지울까요?')) onClear();
+                if (window.confirm('이 PC의 방송 결과 기록을 모두 지울까요? (관리자 화면에 올라간 기록은 남습니다)')) onClear();
               }}
             >
               기록 지우기
             </button>
           </div>
+          )}
         </>
       )}
     </section>

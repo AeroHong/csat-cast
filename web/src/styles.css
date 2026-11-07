@@ -389,3 +389,5 @@ ul.problems ul { margin: 4px 0 0; padding-left: 18px; font-size: 0.85rem; }
 .power-help { margin-top: 10px; font-size: 0.9rem; }
 .power-help summary { cursor: pointer; font-weight: 600; }
 .power-help ul { margin: 6px 0 0; padding-left: 18px; line-height: 1.6; }
+.ok-text { color: var(--ok); font-weight: 600; }
+table.list tr.is-selected td { background: color-mix(in srgb, var(--primary) 10%, transparent); }
