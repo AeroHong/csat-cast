@@ -30,6 +30,9 @@ import { useSession } from '../session';
 import NowPlayingDetail, { formatDuration, useNowPlaying } from './NowPlaying';
 import RehearsalScheduler, { shortDate } from './RehearsalScheduler';
 import ScheduleEditor from './ScheduleEditor';
+import RunReports from './RunReports';
+import { clearReports, incidentsFrom, loadReports, outcomesFrom, saveReport, type RunReport } from '../core/runReports';
+import { LOW_BATTERY, powerText, usePower } from '../core/power';
 
 const RESYNC_MS = 10 * 60_000;
 
@@ -63,6 +66,15 @@ export default function Player() {
   const [unlocked, setUnlocked] = useState(audioEngine.unlocked);
   const [autoplayAllowed, setAutoplayAllowed] = useState(false);
   const [wakeLock, setWakeLock] = useState(false);
+  /** 방송 화면이 가려졌는가 (창 최소화·다른 탭) — 가려지면 화면 꺼짐 방지가 풀린다 */
+  const [hidden, setHidden] = useState(() => document.visibilityState === 'hidden');
+  const power = usePower();
+  /** 이 PC의 방송 회차별 결과 기록 */
+  const [reports, setReports] = useState<RunReport[]>([]);
+  const reportRef = useRef<RunReport | null>(null);
+  const prevArmedRef = useRef(false);
+  /** 지금 시작하는 방송의 이름 (결과 기록용) */
+  const runLabelRef = useRef<string | null>(null);
   const [volume, setVolume] = useState(1);
   const [delaySec, setDelaySec] = useState(10);
   const [speed, setSpeed] = useState(1);
@@ -413,12 +425,15 @@ export default function Player() {
         deviceId: deviceId(),
         planHash,
         runDate: s.runDate,
+        wakeLock,
+        hidden,
+        power: power.level === null ? null : { level: Math.round(power.level * 100) / 100, charging: power.charging },
       });
     };
     send();
     const id = setInterval(send, HEARTBEAT_MS);
     return () => clearInterval(id);
-  }, [profile, channel, assetsReady, loadResult, unlocked, autoplayAllowed, sound, snap.armed, snap.mode, snap.alarms.length, next?.cue.id, clock.synced, clock.source, planHash]);
+  }, [profile, channel, assetsReady, loadResult, unlocked, autoplayAllowed, sound, snap.armed, snap.mode, snap.alarms.length, next?.cue.id, clock.synced, clock.source, planHash, wakeLock, hidden, power.charging, power.level !== null && power.level < LOW_BATTERY]);
 
   // 10-1) 방송별 진행 상태를 보고 (관리자 화면의 학교 × 방송 표). 바뀔 때만 보낸다.
   const timelineSent = useRef('');
@@ -433,13 +448,16 @@ export default function Player() {
     presenceRef.current?.setArmed(snap.armed);
   }, [snap]);
 
-  // 화면 꺼짐 방지 (탭이 다시 보이면 재요청) + 실수로 창 닫기 방지
+  // 화면 꺼짐 방지: 방송 화면이 열려 있는 동안은 항상 (방송 시작 전 대기 중에 노트북·태블릿이 잠들지 않게).
+  // 창을 최소화하거나 다른 탭으로 가면 브라우저가 풀어 버리므로, 다시 보이면 곧바로 재요청한다.
   useEffect(() => {
-    if (!snap.armed) return;
     let lock: WakeLockSentinel | null = null;
+    let alive = true;
     const acquire = async () => {
+      if (document.visibilityState !== 'visible' || (lock && !lock.released)) return;
       try {
         lock = await navigator.wakeLock.request('screen');
+        if (!alive) return void lock.release();
         setWakeLock(true);
         lock.addEventListener('release', () => setWakeLock(false));
       } catch {
@@ -447,16 +465,99 @@ export default function Player() {
       }
     };
     void acquire();
-    const onVis = () => document.visibilityState === 'visible' && void acquire();
+    const onVis = () => {
+      setHidden(document.visibilityState === 'hidden');
+      void acquire();
+    };
     document.addEventListener('visibilitychange', onVis);
-    const onUnload = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener('beforeunload', onUnload);
+    // 드물게 브라우저가 이유 없이 풀어 버리는 경우 대비
+    const retry = setInterval(() => void acquire(), 30_000);
     return () => {
+      alive = false;
+      clearInterval(retry);
       document.removeEventListener('visibilitychange', onVis);
-      window.removeEventListener('beforeunload', onUnload);
       void lock?.release();
     };
+  }, []);
+
+  // 자동 방송 중 실수로 창 닫기 방지
+  useEffect(() => {
+    if (!snap.armed) return;
+    const onUnload = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', onUnload);
+    return () => window.removeEventListener('beforeunload', onUnload);
   }, [snap.armed]);
+
+  // 방송 결과 기록: 자동 방송이 시작되면 회차를 만들고, 진행하는 동안 방송별 결과·사고를 갱신, 멈추면 마감
+  useEffect(() => {
+    if (channel) setReports(loadReports(neisCode, channel.id));
+  }, [neisCode, channel?.id]);
+  useEffect(() => {
+    if (!channel) return;
+    const rose = snap.armed && !prevArmedRef.current;
+    prevArmedRef.current = snap.armed;
+    let r = reportRef.current;
+    if (snap.armed && snap.mode !== 'idle') {
+      if (rose || !r) {
+        // 새로고침·재시작으로 이어서 진행하는 경우는 같은 회차를 이어 쓴다
+        const last = loadReports(neisCode, channel.id)[0];
+        const resumed = last && last.endedAt === null && last.mode === snap.mode && kstDate(last.startedAt) === kstDate(serverClock.now());
+        r = resumed
+          ? last
+          : {
+              id: String(Date.now()),
+              mode: snap.mode,
+              label:
+                (armedToday && snap.runDate === today ? armedToday.label : null) ??
+                runLabelRef.current ??
+                (snap.mode === 'live' ? '실전 방송' : '테스트 방송'),
+              startedAt: serverClock.now(),
+              endedAt: null,
+              cues: [],
+              incidents: [],
+              battery: { min: null, unplugged: false },
+            };
+        runLabelRef.current = null;
+      }
+      r = { ...r, cues: outcomesFrom(snap, false), incidents: incidentsFrom(snap.events, r.startedAt, r.incidents) };
+    } else if (r && r.endedAt === null) {
+      r = {
+        ...r,
+        endedAt: serverClock.now(),
+        cues: outcomesFrom(snap, true, player.wasStoppedByUser),
+        incidents: incidentsFrom(snap.events, r.startedAt, r.incidents),
+      };
+    } else return;
+    reportRef.current = r;
+    setReports(saveReport(neisCode, channel.id, r));
+  }, [snap, channel?.id]);
+
+  /** 방송 중 생긴 PC 환경 문제(화면 가려짐·전원 분리 등)를 이 회차 기록에 남긴다 */
+  function addIncident(message: string, level: 'warn' | 'error' = 'warn') {
+    const r = reportRef.current;
+    if (!channel || !r || r.endedAt !== null || !player.armed) return;
+    const next = { ...r, incidents: [...r.incidents, { at: serverClock.now(), level, message }] };
+    reportRef.current = next;
+    setReports(saveReport(neisCode, channel.id, next));
+  }
+  useEffect(() => {
+    if (hidden) addIncident('방송 화면이 가려짐 (창 최소화·다른 탭) — 화면 꺼짐 방지가 풀립니다');
+  }, [hidden]);
+  useEffect(() => {
+    // 창을 가려서 풀린 경우는 위의 '화면 가려짐'으로 이미 남긴다
+    if (!wakeLock && document.visibilityState === 'visible' && snap.armed && 'wakeLock' in navigator) addIncident('화면 꺼짐 방지가 풀림');
+  }, [wakeLock]);
+  useEffect(() => {
+    const r = reportRef.current;
+    if (!channel || !r || r.endedAt !== null || power.level === null) return;
+    const unplugged = power.charging === false;
+    const min = r.battery?.min == null ? power.level : Math.min(r.battery.min, power.level);
+    if (unplugged && !r.battery?.unplugged) addIncident(`전원 어댑터 분리됨 (배터리 ${Math.round(power.level * 100)}%)`, 'error');
+    const cur = reportRef.current!;
+    const next = { ...cur, battery: { min, unplugged: unplugged || !!cur.battery?.unplugged } };
+    reportRef.current = next;
+    setReports(saveReport(neisCode, channel.id, next));
+  }, [power.level, power.charging]);
 
   async function unlockAudio() {
     const ok = await audioEngine.unlock();
@@ -505,6 +606,7 @@ export default function Player() {
   async function startRehearsal(realTime: boolean) {
     await unlockAudio();
     const base = buildPlan(cues, today);
+    runLabelRef.current = realTime ? '오늘 실제 시각으로 테스트' : `바로 리허설 ${speed}배속`;
     player.arm(realTime ? base : shiftPlan(base, serverClock.now() + delaySec * 1000, speed), 'test');
   }
 
@@ -617,10 +719,20 @@ export default function Player() {
             : '아래 [테스트 소리]를 눌러 교실 스피커에서 들리는지 확인하세요',
     },
     {
-      ok: !snap.armed || wakeLock,
-      warn: snap.armed && !wakeLock,
+      ok: wakeLock,
+      warn: !wakeLock && !snap.armed,
       label: '화면 꺼짐 방지',
-      detail: snap.armed ? (wakeLock ? '켜짐' : '지원 안 됨 — Windows 전원 설정에서 절전을 "안 함"으로') : '방송 시작 시 자동으로 켜짐',
+      detail: wakeLock
+        ? '켜짐 — 이 화면이 열려 있는 동안 화면이 꺼지거나 절전으로 들어가지 않습니다 (창을 최소화하면 풀림)'
+        : hidden
+          ? '꺼짐 — 방송 화면이 가려져 있습니다. 창을 최소화하지 말고 앞에 띄워 두세요'
+          : '이 기기·브라우저에서 지원 안 됨 — 아래 [절전 설정 방법]대로 기기 설정을 바꾸세요',
+    },
+    {
+      ok: power.charging === true,
+      warn: power.charging !== true && !(power.level !== null && power.level < LOW_BATTERY && power.charging === false),
+      label: '전원',
+      detail: powerText(power),
     },
   ];
 
@@ -777,7 +889,7 @@ export default function Player() {
           </section>
           )}
 
-          {tab === 'live' && (
+          {(tab === 'live' || tab === 'test') && (
             <section className="card">
               <h2>방송 준비 점검</h2>
               <ul className="checks">
@@ -816,6 +928,29 @@ export default function Player() {
                   />
                 </label>
               </div>
+              <details className="power-help">
+                <summary>절전 설정 방법 (방송 PC·노트북·태블릿 필수)</summary>
+                <p className="muted small">
+                  이 화면이 앞에 떠 있으면 화면 꺼짐을 막지만, 덮개를 닫거나 창을 최소화하면 막을 수 없습니다. 방송 전에 기기 설정을 함께
+                  바꿔 두세요.
+                </p>
+                <ul>
+                  <li>
+                    <strong>Windows 노트북</strong>: 설정 → 시스템 → 전원 → 화면 끄기·절전 모드 "안 함"(전원 연결 시), 제어판 → 전원 옵션 →
+                    "덮개를 닫으면" → "아무 것도 안 함"
+                  </li>
+                  <li>
+                    <strong>iPad</strong>: 설정 → 디스플레이 및 밝기 → 자동 잠금 "안 함" (배터리 상태는 화면에서 확인할 수 없으니 충전기를 꼭
+                    연결)
+                  </li>
+                  <li>
+                    <strong>안드로이드 태블릿</strong>: 설정 → 디스플레이 → 화면 자동 꺼짐 최대, 절전 모드 끄기
+                  </li>
+                  <li>
+                    <strong>공통</strong>: 전원 어댑터 연결, Windows 업데이트 자동 재시작 미루기, 브라우저 창은 최대화한 채로 두기
+                  </li>
+                </ul>
+              </details>
               {sound === 'not-heard' && (
                 <ol className="help">
                   <li>방송 앰프 전원과 볼륨, 이 PC와 앰프를 잇는 케이블을 확인하세요.</li>
@@ -924,6 +1059,17 @@ export default function Player() {
               now={now}
               official={cfg.armedDates}
               runningDate={snap.armed && snap.mode === 'test' ? snap.runDate : null}
+            />
+          )}
+
+          {tab === 'test' && channel && (
+            <RunReports
+              reports={reports}
+              onClear={() => {
+                clearReports(neisCode, channel.id);
+                reportRef.current = snap.armed ? reportRef.current : null;
+                setReports(reportRef.current ? saveReport(neisCode, channel.id, reportRef.current) : []);
+              }}
             />
           )}
 

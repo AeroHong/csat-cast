@@ -154,6 +154,14 @@ export function judge(r: Omit<ChannelRow, 'health' | 'reasons'>, now: number): {
   for (const a of s.alarms ?? []) bad.push(a);
   if (s.armed && !s.audioUnlocked && !(s.alarms ?? []).length) bad.push('소리 출력 꺼짐');
   if (r.hashMismatch) bad.push('PC 시간표가 서버 설정과 다름 (학교 PC 새로고침 필요)');
+  // PC 전원·절전 (배터리 정보는 브라우저가 줄 때만)
+  if (s.power && s.power.charging === false) {
+    const pct = `${Math.round(s.power.level * 100)}%`;
+    if (s.power.level < 0.2) bad.push(`배터리 부족 ${pct} (전원 연결 필요)`);
+    else warn.push(`배터리로 동작 중 ${pct} (전원 연결 권장)`);
+  }
+  if (r.online && s.hidden) warn.push('방송 화면이 가려짐 (창 최소화·다른 탭 — 절전으로 들어갈 수 있음)');
+  else if (r.online && s.wakeLock === false) warn.push('화면 꺼짐 방지 꺼짐 (기기 절전 설정 확인)');
   if (r.timeline) {
     const cells = r.timeline.map((e) => [e, cellState(e, true, r.online, now)] as const);
     const missing = cells.filter(([, c]) => c.kind === 'missing');

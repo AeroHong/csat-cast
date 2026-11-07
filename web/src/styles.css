@@ -370,3 +370,22 @@ ul.problems { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; 
 ul.problems > li { border-left: 5px solid var(--warn); padding: 6px 10px; background: var(--panel); }
 ul.problems > li.bad { border-left-color: var(--bad); background: var(--bad-bg); }
 ul.problems ul { margin: 4px 0 0; padding-left: 18px; font-size: 0.85rem; }
+
+/* ───────── 방송 결과 기록 ───────── */
+.run-list { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 6px; }
+.run-list > li { border: 1px solid var(--line); border-left: 4px solid var(--none); border-radius: 8px; overflow: hidden; }
+.run-list > li.ok { border-left-color: var(--ok); }
+.run-list > li.bad { border-left-color: var(--bad); }
+.run-list > li.running { border-left-color: var(--primary); }
+.run-head { width: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; text-align: left; border: 0; border-radius: 0; background: transparent; padding: 8px 10px; }
+.run-head .tag { margin-left: 0; }
+.run-label { font-weight: 600; }
+.run-result { flex: 1; min-width: 160px; }
+.run-list > li.ok .run-result { color: var(--ok); font-weight: 600; }
+.run-list > li.bad .run-result { color: var(--bad); font-weight: 600; }
+.run-detail { padding: 4px 10px 10px; border-top: 1px solid var(--line); }
+.run-detail h3 { font-size: 0.9rem; margin: 10px 0 4px; }
+.timeline.compact td { padding: 2px 6px; font-size: 0.85rem; }
+.power-help { margin-top: 10px; font-size: 0.9rem; }
+.power-help summary { cursor: pointer; font-weight: 600; }
+.power-help ul { margin: 6px 0 0; padding-left: 18px; line-height: 1.6; }

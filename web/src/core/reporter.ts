@@ -44,6 +44,12 @@ export interface ChannelStatus {
   timeline?: TimelineEntry[] | null;
   /** 자동 방송 중인 날짜 (리허설은 null) */
   runDate?: string | null;
+  /** 화면 꺼짐 방지가 켜져 있는가 */
+  wakeLock?: boolean;
+  /** 방송 화면이 가려졌는가 (창 최소화·다른 탭) */
+  hidden?: boolean;
+  /** 배터리 (브라우저가 알려 줄 때만). level 0~1 */
+  power?: { level: number; charging: boolean | null } | null;
 }
 
 export type PlayResult = 'played' | 'skipped' | 'failed' | 'manual';
