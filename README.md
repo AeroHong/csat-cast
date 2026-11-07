@@ -9,9 +9,48 @@
   - `src/core/audio.ts` 음원 내려받기·확인, 송출 3분 전 디코딩(끝나면 해제)·정밀 예약 재생 (Web Audio)
   - `src/core/player.ts` 자동 방송 진행기 / `reporter.ts` 실시간 상태·재생 기록 보고
   - `src/data/templates.ts` 2027 수능 안내방송 시간표 6개 유형 (평가원 방송대본 2026-10-05 기준)
-- `functions/` — `/api/time` (Firebase Functions, 서울 리전)
+  - `src/core/board.ts` 관리자 송출 현황판 판정 (학교 × 방송 칸 상태, 시간표 지문, 중복 PC) / `access.ts` 사용 신청·승인 / `presence.ts` 접속 PC
+- `functions/` — `/api/time`, 사용 승인 `approveAccess`·`rejectAccess`·`revokeAccess`, 시험장 유형 변경 `setSchoolSituation` (Firebase Functions, 서울 리전)
 - `scripts/` — 평가원 음원 가져오기(import-audio)·Storage 업로드(upload-audio), 초기 데이터 등록(seed)
 - `firestore.rules`, `database.rules.json`, `storage.rules`
+
+## 로그인 (2027 시범 운영: 제13시험지구)
+- **담당 교사**: [Google 계정으로 로그인] → 처음 한 번 학교를 골라 사용 신청 → 교육지원청 관리자가 승인하면 자동으로 방송 화면이 열린다. 이후 그 PC(전용 실행 아이콘 프로필)에서는 로그인이 유지된다.
+  - 승인 = Functions가 custom claim `{ role: 'school', schoolId }`을 붙임. 보안 규칙은 이 claim으로 자기 학교만 허용한다.
+  - 학교 공용 비밀번호가 없다. 담당자가 바뀌면 관리자가 [권한 회수] (claim 제거 + 세션 토큰 폐기, 열린 화면은 1시간 안에 끊김).
+  - 자동 방송 중 로그인이 끊겨도 방송 화면은 닫히지 않고 그대로 송출한다 (서버 보고만 중단, 화면에 경고).
+  - 신청서의 나이스 학교코드 칸은 형식만 검사한다 (추후 자동 확인용).
+- **관리자**: `node scripts/seed.ts admin <이메일>`로 role=admin을 준 계정. Google 또는 '관리자·테스트 계정'(이메일·비밀번호)으로 로그인.
+- **테스트 학교 9999999**: 예전 방식의 공용 계정(`9999999@csat-cast.app`)도 계속 쓸 수 있다.
+- 학교 id: 나이스 코드를 모르는 시험장은 `d{지구}-{시험장 번호}`(예: 선유고 `d13-20`).
+- 처음 배포할 때 Firebase 콘솔 → Authentication → 로그인 방법에서 **Google**을 사용 설정해야 한다 (승인된 도메인: `csat-cast.web.app`, `localhost`).
+
+## 관리자 화면 (`/admin/status`)
+- **송출 현황**: 일반 시험장 학교 × 방송 시각 표. 칸마다 송출(오차)·수동·건너뜀·실패·**송출 보고 없음**(시각 15초 경과)·연결 끊김을 표시하고, 전체 다음 방송·카운트다운과 학교별 다음 방송을 보여 준다.
+  - **별도 운영 시험장**(`special`, 선유고 경증 시각장애 1.5배)은 표 위 별도 영역에 세로 타임라인으로 표시. 자체 시간표가 없으면 '1.5배 시간표 미등록' 경고.
+  - 빨강 판정: 연결 끊김, 소리 꺼짐, 재생 실패, 송출 보고 없음, **PC 시간표가 서버 설정과 다름**(시간표 지문 비교), **같은 채널을 PC 2대 이상이 열어 둠**(이중 송출 위험), 1.5배 시간표 미등록.
+  - 이 화면은 관찰만 한다. 닫히거나 끊겨도 학교 방송에는 영향이 없다.
+- **사용 신청·학교 관리**: 신청 승인(학교를 바꿔 승인 가능)·반려, 승인된 교사 권한 회수, 학교별 시험장 유형(4교시 탐구 구분/혼합 × 종료 4/5/혼합) 변경(자동 방송 중에는 불가), 시간표 미리 보기, 감사 기록.
+- **송출 기록**: 날짜·실전/테스트별 `playLogs`, 실패·건너뜀 먼저, CSV 내려받기 (기록은 수정·삭제 불가).
+
+## 에뮬레이터로 시험하기 (실제 서버에 쓰지 않음)
+```
+# 권한 규칙·승인 Functions 통합 시험
+npx firebase-tools emulators:exec --only auth,firestore,database,functions --project demo-csat-cast "cd web && npx vitest run src/emulator"
+
+# 연수 시연: 창 1
+npx firebase-tools emulators:start --only auth,firestore,database,functions --project demo-csat-cast
+# 창 2 (scripts 폴더)
+set FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
+set FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099
+set FIREBASE_DATABASE_EMULATOR_HOST=127.0.0.1:9000
+set GCLOUD_PROJECT=demo-csat-cast
+node seed.ts templates && node seed.ts schools ../seed/schools.csv && node emulator-demo.ts
+# 창 3 (web 폴더)
+set VITE_USE_EMULATOR=1&& npx vite --port 5181
+```
+`http://localhost:5181` → '관리자·테스트 계정'으로 `admin@demo.kr` / `demo1234`. 20개교가 테스트 방송 중인 것처럼 채워지고(건너뜀·연결 끊김·PC 중복 각 1곳), `teacher@demo.kr`의 사용 신청이 대기 중이다.
+시험장 CSV(`seed/schools.csv`, 커밋 안 함)는 시험지구 일람표 엑셀에서 만든다: 탐구 열에 `사·과`가 있으면 혼합, 제2외국어 X → 종료 4, O → 혼합(관리자 화면에서 학교별 조정).
 
 ## 로컬 실행
 ```
@@ -68,7 +107,7 @@ node scripts/import-audio.ts        # 또는 node scripts/import-audio.ts <폴�
 cd scripts && npm install && cd ..
 cd functions && npm install && cd ..
 cd web && npm run build && cd ..
-firebase deploy
+firebase deploy            # hosting, functions(승인 기능 포함), firestore·database·storage 규칙
 set GOOGLE_APPLICATION_CREDENTIALS=service-account.json
 node scripts/seed.ts templates
 node scripts/seed.ts schools seed/schools.csv
@@ -88,7 +127,7 @@ npx firebase-tools login      # 배포할 때만
 ```
 개발 서버에서 `http://localhost:5173/player?devArmed=1` → 오늘을 방송일로 가정하고 60배속으로 자동 방송을 시험할 수 있다.
 
-## 작업 현황 (2026-10-28 기준)
+## 작업 현황 (2026-11-07 기준)
 완료
 - 자동 방송 엔진(서버 시각 동기화, 정밀 예약 재생), 학교 플레이어, 관리자 실시간 상태판
 - Firebase 배포: Hosting(https://csat-cast.web.app), Functions `/api/time`(서울), 보안 규칙, 시간표 초안 업로드, 관리자 권한, 테스트 학교 계정(9999999)
@@ -102,7 +141,11 @@ npx firebase-tools login      # 배포할 때만
 - [x] 실제 mp3 교체, 2027 방송대본 기준 시간표 6개 유형 반영 (2026-10-30)
 - [ ] 연장 시험실 시간표 등록 (시험장 시나리오·대본 확인 후 별도 작업)
 - [x] `node scripts/seed.ts templates`로 csat-1~6 등록(초안 general-4/5 삭제), 테스트 학교 9999999 → csat-2, 음원 Storage 업로드 (2026-10-30)
-- [ ] 시험장 목록 CSV로 학교 계정 일괄 생성
+- [x] 시험장 목록 CSV로 학교 등록 — 제13시험지구 20곳 `d13-01`~`d13-20`, 사용 신청용 학교 목록 `directory/schools` (2026-11-07, 배포 전)
+- [x] 담당 교사 Google 로그인 + 관리자 승인(custom claim), 권한 회수·감사 기록, 방송 중 로그인 끊김에도 송출 유지 (2026-11-07, 배포 전)
+- [x] 관리자 학교 × 방송 송출 표, 선유고 별도 영역, 시간표 지문·이중 PC 감지, 송출 기록 CSV, 에뮬레이터 통합 시험·시연 데이터 (2026-11-07, 배포 전)
+- [ ] 위 변경 배포: 콘솔에서 Google 로그인 켜기 → `firebase deploy` → `seed.ts schools seed/schools.csv` → 연수 전 리허설
+- [ ] 선유고 1.5배 자체 시간표 작성 (학교 [시간표 편집])
 - [x] 학교 자체 시간표 편집·음원 업로드 (2026-11-03, 경증 시각장애 시험장용)
-- [ ] 관리자 관리 화면(학교 시간표 확인 포함), 학교×교시 송출 표
+- [x] 관리자 관리 화면(학교 시간표 확인 포함), 학교×교시 송출 표 (2026-11-07)
 - [ ] 수능 주간 Functions `MIN_INSTANCES=1` 재배포

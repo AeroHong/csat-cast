@@ -2,20 +2,57 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    function isAdmin() { return signedIn() && request.auth.token.role == 'admin'; }
-    // 학교 계정 이메일 = {나이스코드}@csat-cast.app
+    function isAdmin() { return signedIn() && request.auth.token.get('role', '') == 'admin'; }
+    /**
+     * 학교 권한
+     * - 담당 교사 구글 계정: 관리자가 승인하면 custom claim schoolId 가 붙는다 (functions/index.js approveAccess)
+     * - 예전 학교 계정(테스트 학교 9999999 등): 이메일 = {학교 id}@csat-cast.app
+     */
     function isSchool(code) {
-      return signedIn() && request.auth.token.email == code + '@csat-cast.app';
+      return signedIn()
+        && (request.auth.token.get('schoolId', '') == code
+          || request.auth.token.get('email', '') == code + '@csat-cast.app');
+    }
+    /** 승인된 학교 담당자 또는 관리자 (승인 전 구글 계정은 제외) */
+    function isMember() {
+      return isAdmin()
+        || (signedIn() && (request.auth.token.get('schoolId', '') != ''
+          || request.auth.token.get('email', '').matches('.*@csat-cast[.]app$')));
     }
 
-    // 공식 시간표·전역 설정: 로그인 사용자 읽기, admin만 수정
+    // 공식 시간표·전역 설정: 승인된 사용자 읽기, admin만 수정
     match /templates/{id} {
-      allow read: if signedIn();
+      allow read: if isMember();
       allow write: if isAdmin();
     }
     match /config/{id} {
+      allow read: if isMember();
+      allow write: if isAdmin();
+    }
+
+    // 사용 신청할 학교 목록 (학교명·시험장 번호만 담는다): 로그인한 누구나 읽기
+    match /directory/{id} {
       allow read: if signedIn();
       allow write: if isAdmin();
+    }
+
+    // 사용 신청: 본인만 '대기' 상태로 만들고 고칠 수 있다. 승인·거절은 Functions(관리자 SDK)만 한다.
+    match /accessRequests/{uid} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.uid == uid
+        && request.resource.data.schoolId is string
+        && request.resource.data.keys().hasOnly(['uid', 'email', 'displayName', 'name', 'phone', 'schoolId', 'neisCode', 'status', 'requestedAt'])
+        // 승인된 신청은 본인이 대기로 되돌릴 수 없다 (거절·회수된 뒤에는 다시 신청 가능)
+        && (resource == null || resource.data.status in ['pending', 'rejected', 'revoked']);
+      allow delete: if false;
+    }
+
+    // 감사 기록 (승인·거절·회수·유형 변경): Functions만 쓰고 관리자만 읽는다
+    match /auditLogs/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // 학교 프로필: 자기 학교만 읽기. 채널 설정(큐 on/off, 추가 큐)만 학교가 수정 가능

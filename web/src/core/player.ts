@@ -22,6 +22,10 @@ export interface PlayerSnapshot {
   starts: Record<string, number>;
   /** 본령이 늦어 늦춘 시간(ms). 늦춘 큐만 들어 있다 */
   delays: Record<string, number>;
+  /** 큐별로 실제 소리가 시작된(시작될) 시각 — 관리자 화면의 송출 오차 */
+  startedAt: Record<string, number>;
+  /** 담당자가 [지금 재생]으로 직접 내보낸 큐 */
+  manual: string[];
   playing: string[];
   events: PlayerEvent[];
   /** 지금 해결이 필요한 문제 (상태판에 빨간색으로 표시) */
@@ -53,6 +57,8 @@ export class PlayerController {
   private plan: PlannedCue[] = [];
   private delays: Record<string, number> = {};
   private starts: Record<string, number> = {};
+  private startedAt: Record<string, number> = {};
+  private manual = new Set<string>();
   private states: Record<string, CueState> = {};
   private handles = new Map<string, PlayHandle>();
   /** 이 진행기가 디코딩을 요청해 둔 음원 (필요 없어지면 메모리에서 내린다) */
@@ -87,6 +93,8 @@ export class PlayerController {
     this.disarm(false);
     this.basePlan = plan;
     this.starts = { ...opts.starts };
+    this.startedAt = {};
+    this.manual.clear();
     this.applyDelays();
     this.mode = mode;
     this.runDate = opts.date ?? null;
@@ -139,14 +147,20 @@ export class PlayerController {
     const item = this.plan.find((p) => p.cue.id === cueId);
     if (!item) return;
     // 수동으로 재생한 큐는 자동 재생 대상에서 뺀다 (중복 방지). 디코딩을 기다리는 사이 자동 재생되지 않도록 먼저 바꾼다.
-    const wasPending = this.states[cueId] === 'pending';
-    if (wasPending) this.states[cueId] = 'done';
+    // 건너뜀·실패였던 큐를 직접 내보낸 경우도 '수동 송출'로 기록한다 (관리자 화면에서 빨강이 풀리도록).
+    const prev = this.states[cueId];
+    const counts = prev === 'pending' || prev === 'skipped' || prev === 'failed';
+    if (counts) this.states[cueId] = 'done';
     try {
       this.prepared.add(item.cue.assetId);
       await this.audio.prepare(item.cue.assetId);
       const now = this.clock.now();
       const h = this.audio.playAt(item.cue.assetId, now, now);
       this.push('info', `수동 재생: ${item.cue.label}`, cueId);
+      if (counts) {
+        this.manual.add(cueId);
+        this.startedAt[cueId] = now;
+      }
       // 본령을 직접 울렸으면 그때 시험이 시작된 것이므로 뒤 방송을 그에 맞춘다
       this.recordStart(item, now);
       this.handles.set(`manual-${cueId}-${now}`, h);
@@ -161,7 +175,7 @@ export class PlayerController {
         result: 'manual',
       });
     } catch (e) {
-      if (wasPending) this.states[cueId] = 'pending';
+      if (counts) this.states[cueId] = prev;
       this.push('error', `수동 재생 실패: ${(e as Error).message}`, cueId);
     }
     this.emit();
@@ -188,6 +202,8 @@ export class PlayerController {
       states: { ...this.states },
       starts: { ...this.starts },
       delays: { ...this.delays },
+      startedAt: { ...this.startedAt },
+      manual: [...this.manual],
       playing: Object.entries(this.states)
         .filter(([, s]) => s === 'playing')
         .map(([id]) => id),
@@ -327,6 +343,7 @@ export class PlayerController {
       const h = this.audio.playAt(cue.assetId, at, now);
       this.handles.set(cue.id, h);
       this.states[cue.id] = 'scheduled';
+      this.startedAt[cue.id] = h.startAt;
       this.recordStart(item, h.startAt);
       void h.ended.then(() => {
         // 취소된 예약의 종료 이벤트가 늦게 와서 새로 건 예약을 완료로 바꾸지 않도록 같은 예약인지 확인

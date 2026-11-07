@@ -3,8 +3,20 @@
     "status": {
       ".read": "auth != null && auth.token.role == 'admin'",
       "$school": {
-        ".read": "auth != null && auth.token.email == $school + '@csat-cast.app'",
-        ".write": "auth != null && (auth.token.email == $school + '@csat-cast.app' || auth.token.role == 'admin')"
+        ".read": "auth != null && (auth.token.schoolId == $school || auth.token.email == $school + '@csat-cast.app')",
+        ".write": "auth != null && (auth.token.schoolId == $school || auth.token.email == $school + '@csat-cast.app' || auth.token.role == 'admin')"
+      }
+    },
+    "presence": {
+      ".read": "auth != null && auth.token.role == 'admin'",
+      "$school": {
+        ".read": "auth != null && (auth.token.schoolId == $school || auth.token.email == $school + '@csat-cast.app')",
+        "$channel": {
+          "$device": {
+            ".write": "auth != null && (auth.token.schoolId == $school || auth.token.email == $school + '@csat-cast.app')",
+            ".validate": "!newData.exists() || newData.hasChildren(['since', 'uid'])"
+          }
+        }
       }
     }
   }

@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { audioEngine, type LoadResult } from '../core/audio';
+import { usingEmulator } from '../core/firebase';
+import { cuesHash, devicesConflict, toTimeline, type DevicePresence } from '../core/board';
 import {
   loadBuiltinAssets,
   loadGlobalConfig,
@@ -10,6 +12,7 @@ import {
 } from '../core/catalog';
 import { OS_DRIFT_WARN_MS, serverClock, type ClockStatus } from '../core/clock';
 import { player, type PlayerSnapshot } from '../core/player';
+import { deviceId, startPresence, watchPresence } from '../core/presence';
 import { HEARTBEAT_MS, Reporter } from '../core/reporter';
 import { describeRehearsal, loadRehearsals, rehearsalPlan, saveRehearsals, type ScheduledRehearsal } from '../core/rehearsals';
 import { loadRun, saveRun } from '../core/runStore';
@@ -66,6 +69,9 @@ export default function Player() {
   /** 화면 탭: 실전 방송 / 테스트·리허설 / 시간표 편집 */
   const [tab, setTab] = useState<'live' | 'test' | 'edit'>('live');
   const reporterRef = useRef<Reporter | null>(null);
+  const presenceRef = useRef<ReturnType<typeof startPresence> | null>(null);
+  /** 같은 채널을 연 PC들 (다른 PC에서도 열었으면 이중 송출 위험) */
+  const [devices, setDevices] = useState<Record<string, DevicePresence>>({});
 
   const channelId = params.get('channel') ?? profile?.channels[0]?.id ?? 'main';
   const channel = profile?.channels.find((c) => c.id === channelId) ?? profile?.channels[0];
@@ -73,6 +79,7 @@ export default function Player() {
   /** 학교가 직접 만든 시간표로 방송하는가 (평가원 유형 대신) */
   const custom = !!channel?.customCues;
   const cues = useMemo(() => resolveCues(template, channel), [template, channel]);
+  const planHash = useMemo(() => cuesHash(cues), [cues]);
 
   const today = kstDate(now);
   const nowPlaying = useNowPlaying();
@@ -114,7 +121,8 @@ export default function Player() {
       const [p, t, b, s, g] = await Promise.all([
         loadSchool(neisCode),
         loadTemplates(),
-        loadBuiltinAssets(neisCode !== 'LOCAL').catch(() => []),
+        // 에뮬레이터 시험 중에는 Storage 대신 개발 PC의 음원을 쓴다
+        loadBuiltinAssets(neisCode !== 'LOCAL' && !usingEmulator).catch(() => []),
         loadSchoolAssets(neisCode),
         loadGlobalConfig(),
       ]);
@@ -223,9 +231,23 @@ export default function Player() {
     const r = new Reporter(neisCode, channel.id);
     reporterRef.current = r;
     player.reporter = r;
+
     r.start();
+    // 새 보고기에는 방송별 진행 상태를 바로 다시 보낸다 (채널을 바꾸거나 다시 연 경우)
+    const s0 = player.snapshot();
+    const tl0 = s0.armed && s0.mode !== 'idle' ? toTimeline(s0.plan, s0.states, s0.startedAt, s0.manual) : null;
+    timelineSent.current = JSON.stringify(tl0);
+    r.update({ timeline: tl0 });
+    const u = session.user;
+    const pr = u ? startPresence(neisCode, channel.id, { uid: u.uid, email: u.email ?? '', name: u.displayName ?? '' }) : null;
+    presenceRef.current = pr;
+    const unwatch = watchPresence(neisCode, channel.id, setDevices);
     return () => {
       r.stop();
+      pr?.stop();
+      unwatch();
+      presenceRef.current = null;
+      setDevices({});
       if (player.reporter === r) player.reporter = null;
     };
     // 채널 설정 내용(시간표 저장 등)이 바뀔 때마다 보고를 다시 시작하지 않도록 채널 id 기준
@@ -346,12 +368,29 @@ export default function Player() {
         doneCount: c.done,
         failedCount: c.failed,
         skippedCount: c.skipped,
+        operator: session.operator,
+        deviceId: deviceId(),
+        planHash,
+        runDate: s.runDate,
       });
     };
     send();
     const id = setInterval(send, HEARTBEAT_MS);
     return () => clearInterval(id);
-  }, [profile, channel, assetsReady, loadResult, unlocked, autoplayAllowed, sound, snap.armed, snap.mode, snap.alarms.length, next?.cue.id, clock.synced, clock.source]);
+  }, [profile, channel, assetsReady, loadResult, unlocked, autoplayAllowed, sound, snap.armed, snap.mode, snap.alarms.length, next?.cue.id, clock.synced, clock.source, planHash]);
+
+  // 10-1) 방송별 진행 상태를 보고 (관리자 화면의 학교 × 방송 표). 바뀔 때만 보낸다.
+  const timelineSent = useRef('');
+  useEffect(() => {
+    const r = reporterRef.current;
+    if (!r) return;
+    const timeline = snap.armed && snap.mode !== 'idle' ? toTimeline(snap.plan, snap.states, snap.startedAt, snap.manual) : null;
+    const key = JSON.stringify(timeline);
+    if (key === timelineSent.current) return;
+    timelineSent.current = key;
+    r.update({ timeline });
+    presenceRef.current?.setArmed(snap.armed);
+  }, [snap]);
 
   // 화면 꺼짐 방지 (탭이 다시 보이면 재요청) + 실수로 창 닫기 방지
   useEffect(() => {
@@ -612,6 +651,26 @@ export default function Player() {
           )}
           {template && !custom && !template.verified && (
             <div className="banner warn">⚠ 이 시간표는 아직 공식 시간표로 검증되지 않은 초안입니다.</div>
+          )}
+          {session.authLost && (
+            <div className="banner bad">
+              ⚠ 서버 로그인이 끊겼습니다 (권한 회수 또는 로그인 만료). 자동 방송은 이 PC에서 그대로 계속되지만 교육지원청으로 보고가 되지 않습니다.
+              방송이 모두 끝난 뒤 다시 로그인하세요.
+            </div>
+          )}
+                    {devicesConflict(devices).length > 0 && (
+            <div className="banner bad">
+              ⛔ 다른 PC에서도 이 방송 채널이 열려 있습니다 (이중 송출 위험). 한 대만 남기고 나머지 PC의 창을 닫으세요.
+              <ul>
+                {devicesConflict(devices).map((d, i) => (
+                  <li key={i}>
+                    {d.name || d.email || d.uid} · {new Date(d.since).toLocaleTimeString('ko-KR')}부터
+                    {d.armed ? ' · 자동 방송 중' : ''}
+                    {Object.entries(devices).find(([, v]) => v === d)?.[0] === deviceId() ? ' (이 PC)' : ''}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           {updatePending && (
             <div className="banner">새 버전이 준비되어 있습니다. 방송이 끝난 뒤 자동으로 적용됩니다 (방송 중에는 적용하지 않음).</div>

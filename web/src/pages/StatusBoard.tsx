@@ -1,170 +1,194 @@
-import { collection, getDocs } from 'firebase/firestore';
-import { onValue, ref } from 'firebase/database';
-import { useEffect, useRef, useState } from 'react';
-import { serverClock } from '../core/clock';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { nextAcross } from '../core/board';
 import { fb } from '../core/firebase';
-import type { ChannelStatus } from '../core/reporter';
-import { kstTime } from '../core/scheduler';
-import type { SchoolProfile } from '../core/types';
+import { kstDate, kstTime } from '../core/scheduler';
 import { useSession } from '../session';
+import AccessAdmin from './admin/AccessAdmin';
+import LiveBoard, { CellLegend } from './admin/LiveBoard';
+import PlayLogs from './admin/PlayLogs';
+import SpecialVenue, { countdown } from './admin/SpecialVenue';
+import { buildRows, useAdminData, type ChannelRow, type Health, type ModeFilter } from './admin/data';
 
-type Health = 'ok' | 'warn' | 'bad' | 'none';
+type Tab = 'live' | 'access' | 'logs';
+const ORDER: Record<Health, number> = { bad: 0, warn: 1, none: 2, ok: 3 };
 
-const STALE_MS = 90_000;
-const LATE_REPORT_MS = 15_000;
-
-/** 채널 상태를 초록/노랑/빨강으로 판정하고 사유를 붙인다. */
-export function judge(s: ChannelStatus | undefined, now: number): { health: Health; reasons: string[] } {
-  if (!s) return { health: 'none', reasons: ['접속 기록 없음'] };
-  const bad: string[] = [];
-  const warn: string[] = [];
-  if (!s.online || now - s.lastSeen > STALE_MS) {
-    bad.push(s.armed ? '연결 끊김 (PC에서 재생은 계속될 수 있음)' : '연결 끊김');
-  }
-  for (const a of s.alarms ?? []) bad.push(a);
-  if (s.armed && !s.audioUnlocked && !(s.alarms ?? []).length) bad.push('소리 출력 꺼짐');
-  if (s.failedCount > 0) bad.push(`재생 실패 ${s.failedCount}건`);
-  if (s.armed && s.nextCue && now > s.nextCue.at + LATE_REPORT_MS) bad.push(`'${s.nextCue.label}' 송출 보고 지연`);
-  if (!s.cacheReady) warn.push(s.missingAssets ? `음원 ${s.missingAssets}개 누락` : '음원 준비 중');
-  if (!s.clockSynced) warn.push('시각 미동기화');
-  if (!s.armed && !s.audioUnlocked) warn.push('소리 출력 꺼짐');
-  if (!s.soundConfirmed) warn.push('스피커 확인 안 함');
-  if (!s.autoplayAllowed) warn.push('전용 실행 아이콘 미사용 (새로고침 시 클릭 필요)');
-  if (!s.armed) warn.push('자동 방송 대기 아님');
-  if (s.skippedCount > 0) warn.push(`건너뜀 ${s.skippedCount}건`);
-  if (bad.length) return { health: 'bad', reasons: [...bad, ...warn] };
-  if (warn.length) return { health: 'warn', reasons: warn };
-  return { health: 'ok', reasons: ['정상'] };
-}
-
+/** 교육지원청 관리자 화면: 송출 현황 / 사용 신청·학교 관리 / 송출 기록 */
 export default function StatusBoard() {
   const session = useSession();
-  const [status, setStatus] = useState<Record<string, Record<string, ChannelStatus>>>({});
-  const [schools, setSchools] = useState<SchoolProfile[]>([]);
-  const [now, setNow] = useState(serverClock.now());
+  const data = useAdminData();
+  const { now, connected } = data;
+  const [tab, setTab] = useState<Tab>('live');
+  const [mode, setMode] = useState<ModeFilter>('all');
   const [onlyProblems, setOnlyProblems] = useState(false);
+  const [sortByHealth, setSortByHealth] = useState(false);
   const [alertSound, setAlertSound] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
   const prevBad = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!fb) return;
-    void serverClock.sync();
-    const unsub = onValue(ref(fb.rtdb, 'status'), (snap) => setStatus(snap.val() ?? {}));
-    void getDocs(collection(fb.db, 'schools')).then((s) =>
-      setSchools(s.docs.map((d) => ({ ...(d.data() as SchoolProfile), neisCode: d.id }))),
-    );
-    const id = setInterval(() => setNow(serverClock.now()), 1000);
-    return () => {
-      unsub();
-      clearInterval(id);
-    };
+    return onSnapshot(query(collection(fb.db, 'accessRequests'), where('status', '==', 'pending')), (s) => setPendingCount(s.size));
   }, []);
+
+  const rows = useMemo(() => buildRows(data, mode), [data.status, data.presence, data.schools, data.templates, now, mode]);
+  const special = rows.filter((r) => r.special);
+  const general = rows.filter((r) => !r.special);
 
   // 새로 '문제'가 생긴 시험장이 있으면 경고음 + 탭 제목에 표시 (다른 창을 보고 있어도 알 수 있게)
   useEffect(() => {
-    const badNow = new Set(
-      Object.entries(status).flatMap(([code, chans]) =>
-        Object.entries(chans).filter(([, s]) => judge(s, now).health === 'bad').map(([ch]) => `${code}/${ch}`),
-      ),
-    );
+    const badNow = new Set(rows.filter((r) => r.health === 'bad').map((r) => `${r.code}/${r.ch}|${r.reasons[0]}`));
     const newlyBad = [...badNow].some((k) => !prevBad.current.has(k));
     prevBad.current = badNow;
-    document.title = badNow.size ? `(${badNow.size}) 문제 — 방송 상태판` : '방송 상태판';
+    const n = rows.filter((r) => r.health === 'bad').length;
+    document.title = n ? `(${n}) 문제 — 방송 상태판` : '방송 상태판';
     if (newlyBad && alertSound) beep();
-  }, [status, now, alertSound]);
+  }, [rows, alertSound]);
 
   if (!fb) return <div className="center">상태판은 서버 연결이 필요합니다.</div>;
 
-  // 등록된 학교 + 등록은 안 됐지만 접속한 학교 모두 표시
-  const codes = new Set([...schools.map((s) => s.neisCode), ...Object.keys(status)]);
-  const rows = [...codes].flatMap((code) => {
-    const school = schools.find((s) => s.neisCode === code);
-    const chans = school?.channels?.map((c) => c.id) ?? [];
-    const ids = new Set([...chans, ...Object.keys(status[code] ?? {})]);
-    if (ids.size === 0) ids.add('main');
-    return [...ids].map((ch) => {
-      const s = status[code]?.[ch];
-      return {
-        code,
-        ch,
-        name: school?.name ?? s?.schoolName ?? code,
-        label: school?.channels?.find((c) => c.id === ch)?.label ?? s?.channelLabel ?? ch,
-        s,
-        ...judge(s, now),
-      };
-    });
-  });
-  const order: Record<Health, number> = { bad: 0, warn: 1, none: 2, ok: 3 };
-  rows.sort((a, b) => order[a.health] - order[b.health] || a.name.localeCompare(b.name, 'ko'));
   const count = (h: Health) => rows.filter((r) => r.health === h).length;
-  const shown = onlyProblems ? rows.filter((r) => r.health !== 'ok') : rows;
+  const next = nextAcross(
+    rows.map((r) => ({ timeline: r.timeline, armed: r.armed, ready: r.health !== 'bad' && !!r.s?.cacheReady })),
+    now,
+  );
+  const sortRows = (list: ChannelRow[]) =>
+    [...list].sort(
+      (a, b) =>
+        (sortByHealth ? ORDER[a.health] - ORDER[b.health] : 0) ||
+        (a.examNo ?? 999) - (b.examNo ?? 999) ||
+        a.name.localeCompare(b.name, 'ko') ||
+        a.ch.localeCompare(b.ch),
+    );
+  const shownGeneral = sortRows(onlyProblems ? general.filter((r) => r.health !== 'ok') : general);
 
   return (
     <div className="board">
       <header className="bar">
-        <strong>시험장 방송 상태</strong>
-        <span className="mono">{kstTime(now)}</span>
-        <button className="link" onClick={() => void session.logout()}>
-          로그아웃
-        </button>
+        <strong>수능 방송 관리 — 제13시험지구</strong>
+        <nav className="tabs" role="tablist">
+          <button role="tab" aria-selected={tab === 'live'} className={tab === 'live' ? 'active' : ''} onClick={() => setTab('live')}>
+            송출 현황
+            {count('bad') > 0 && <span className="tag live">{count('bad')}</span>}
+          </button>
+          <button role="tab" aria-selected={tab === 'access'} className={tab === 'access' ? 'active' : ''} onClick={() => setTab('access')}>
+            사용 신청·학교 관리
+            {pendingCount > 0 && <span className="tag test">{pendingCount}</span>}
+          </button>
+          <button role="tab" aria-selected={tab === 'logs'} className={tab === 'logs' ? 'active' : ''} onClick={() => setTab('logs')}>
+            송출 기록
+          </button>
+        </nav>
+        <div className="bar-right">
+          <span className="mono big-clock">{kstTime(now)}</span>
+          {!connected && <span className="tag live">서버 연결 끊김 — 화면이 최신이 아님</span>}
+          <span className="muted small">{session.operator}</span>
+          <button className="link" onClick={() => void session.logout()}>
+            로그아웃
+          </button>
+        </div>
       </header>
 
-      <div className="summary">
-        <div className="sum ok">정상 {count('ok')}</div>
-        <div className="sum warn">주의 {count('warn')}</div>
-        <div className="sum bad">문제 {count('bad')}</div>
-        <div className="sum none">미접속 {count('none')}</div>
-        <label className="row">
-          <input
-            type="checkbox"
-            checked={alertSound}
-            onChange={(e) => {
-              setAlertSound(e.target.checked);
-              if (e.target.checked) beep();
-            }}
-          />
-          문제 발생 시 경고음
-        </label>
-        <label className="row">
-          <input type="checkbox" checked={onlyProblems} onChange={(e) => setOnlyProblems(e.target.checked)} />
-          문제 있는 곳만
-        </label>
-      </div>
-
-      <div className="grid">
-        {shown.map((r) => (
-          <div key={`${r.code}/${r.ch}`} className={`tile ${r.health}`}>
-            <div className="tile-head">
-              <strong>{r.name}</strong>
-              <span className="muted">{r.label}</span>
-              {r.s?.mode && r.s.mode !== 'idle' && <span className={`tag ${r.s.mode}`}>{r.s.mode === 'live' ? '실전' : '테스트'}</span>}
+      {tab === 'live' && (
+        <>
+          <div className="summary">
+            <div className="sum ok">정상 {count('ok')}</div>
+            <div className="sum warn">주의 {count('warn')}</div>
+            <div className="sum bad">문제 {count('bad')}</div>
+            <div className="sum none">미접속 {count('none')}</div>
+            <div className={`next-across ${next && next.notReady ? 'bad' : ''}`}>
+              {next ? (
+                <>
+                  다음 방송 <strong className="mono">{kstTime(next.at)}</strong> {next.labels.join(' / ')}
+                  <span className="muted">
+                    {' '}
+                    · {countdown(next.at - now)} 후 · {next.schools}곳 송출 예정
+                    {next.notReady > 0 && <strong className="error"> · {next.notReady}곳 문제</strong>}
+                  </span>
+                </>
+              ) : (
+                <span className="muted">자동 방송 대기 중인 시험장 없음 ({kstDate(now)})</span>
+              )}
             </div>
-            <ul className="reasons">
+          </div>
+          <div className="row controls">
+            <select value={mode} onChange={(e) => setMode(e.target.value as ModeFilter)}>
+              <option value="all">실전·테스트 모두 표시</option>
+              <option value="live">실전 방송만</option>
+              <option value="test">테스트·리허설만</option>
+            </select>
+            <label className="row">
+              <input type="checkbox" checked={onlyProblems} onChange={(e) => setOnlyProblems(e.target.checked)} />
+              문제 있는 곳만
+            </label>
+            <label className="row">
+              <input type="checkbox" checked={sortByHealth} onChange={(e) => setSortByHealth(e.target.checked)} />
+              문제 순으로 정렬
+            </label>
+            <label className="row">
+              <input
+                type="checkbox"
+                checked={alertSound}
+                onChange={(e) => {
+                  setAlertSound(e.target.checked);
+                  if (e.target.checked) beep();
+                }}
+              />
+              문제 발생 시 경고음
+            </label>
+          </div>
+
+          {special.map((r) => (
+            <SpecialVenue key={`${r.code}/${r.ch}`} row={r} now={now} />
+          ))}
+
+          <section className="card">
+            <h2>일반 시험장 {general.length}곳</h2>
+            <LiveBoard rows={shownGeneral} now={now} />
+            <CellLegend />
+          </section>
+
+          <ProblemList rows={sortRows(rows.filter((r) => r.health === 'bad' || r.health === 'warn'))} />
+
+          <p className="muted small footnote">
+            이 화면은 학교 PC가 보내는 보고를 보여 주기만 합니다. 이 화면을 닫거나 인터넷이 끊겨도 학교 방송에는 영향이 없습니다.
+            학교 PC는 서버 시각에 맞춰 스스로 송출하고, 보고가 늦으면 15초 뒤 '송출 보고 없음'으로 표시됩니다.
+          </p>
+        </>
+      )}
+
+      {tab === 'access' && <AccessAdmin schools={data.schools} rows={rows} templates={data.templates} />}
+      {tab === 'logs' && <PlayLogs schools={data.schools} now={now} />}
+    </div>
+  );
+}
+
+/** 시험장별 문제·주의 사유 전체 목록 */
+function ProblemList({ rows }: { rows: ChannelRow[] }) {
+  if (!rows.length) return null;
+  return (
+    <section className="card">
+      <h2>확인이 필요한 시험장</h2>
+      <ul className="problems">
+        {rows.map((r) => (
+          <li key={`${r.code}/${r.ch}`} className={r.health}>
+            <strong>{r.name}</strong>
+            {r.ch !== 'main' && <span className="muted"> · {r.label}</span>}
+            {r.s?.operator && <span className="muted"> · {r.s.operator}</span>}
+            <ul>
               {r.reasons.map((x) => (
                 <li key={x}>{x}</li>
               ))}
             </ul>
-            {r.s && (
-              <div className="tile-foot muted">
-                {r.s.lastCue && (
-                  <div>
-                    최근: {r.s.lastCue.label} ({resultLabel(r.s.lastCue.result)})
-                  </div>
-                )}
-                {r.s.nextCue && (
-                  <div>
-                    다음: {kstTime(r.s.nextCue.at)} {r.s.nextCue.label}
-                  </div>
-                )}
-                <div>
-                  완료 {r.s.doneCount ?? 0} · 마지막 신호 {Math.max(0, Math.round((now - r.s.lastSeen) / 1000))}초 전 · v{r.s.appVersion}
-                </div>
+            {r.devices.length > 1 && (
+              <div className="muted small">
+                열린 PC: {r.devices.map((d) => `${d.name || d.email || d.uid}(${new Date(d.since).toLocaleTimeString('ko-KR')}~)`).join(', ')}
               </div>
             )}
-          </div>
+          </li>
         ))}
-      </div>
-    </div>
+      </ul>
+    </section>
   );
 }
 
@@ -182,8 +206,4 @@ function beep() {
     osc.start(t + i * 0.3);
     osc.stop(t + i * 0.3 + 0.2);
   }
-}
-
-function resultLabel(r: string) {
-  return { played: '송출', skipped: '건너뜀', failed: '실패', manual: '수동' }[r] ?? r;
 }

@@ -318,3 +318,40 @@ describe('본령이 늦으면 그 시험의 뒤 방송을 늦춘다 (시험 시�
     expect([at('t2-5min'), at('end')]).toEqual([250_000, 350_000]);
   });
 });
+
+describe('관리자 화면 보고용 기록 (실제 시작 시각·수동 송출)', () => {
+  it('자동 송출은 실제 시작 시각을 남긴다', async () => {
+    player.arm(plan, 'test');
+    await flush();
+    clock.t = 9_000;
+    tick();
+    expect(player.snapshot().startedAt.bell).toBe(10_000);
+    expect(player.snapshot().manual).toEqual([]);
+  });
+
+  it('건너뛴 방송을 [지금 재생]으로 내보내면 수동 송출로 바뀐다', async () => {
+    player.arm(plan, 'test');
+    clock.t = 20_000; // 타종 허용 5초 초과 → 건너뜀
+    tick();
+    expect(player.snapshot().states.bell).toBe('skipped');
+    await player.playNow('bell');
+    const s = player.snapshot();
+    expect(s.states.bell).toBe('done');
+    expect(s.manual).toEqual(['bell']);
+    expect(s.startedAt.bell).toBe(20_000);
+  });
+
+  it('이미 송출된 방송을 다시 틀어도 원래 송출 기록은 그대로', async () => {
+    player.arm(plan, 'test');
+    await flush();
+    clock.t = 9_000;
+    tick();
+    audio.endAll();
+    await flush();
+    expect(player.snapshot().states.bell).toBe('done');
+    clock.t = 30_000;
+    await player.playNow('bell');
+    expect(player.snapshot().manual).toEqual([]);
+    expect(player.snapshot().startedAt.bell).toBe(10_000);
+  });
+});

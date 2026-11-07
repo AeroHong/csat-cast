@@ -77,6 +77,10 @@ export interface SchoolProfile {
   inquiryRooms?: InquiryRooms;
   endPeriod?: EndPeriod;
   inquiryNote?: string;
+  /** 시험장 번호 (시험지구 일람표 순번) */
+  examNo?: number | null;
+  /** 별도 운영 시험장 (경증 시각장애 1.5배 등) — 학교 자체 시간표로 방송하고 관리자 화면에 따로 표시 */
+  special?: boolean;
   channels: ChannelConfig[];
 }
 

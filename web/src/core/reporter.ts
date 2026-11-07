@@ -1,9 +1,10 @@
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { onDisconnect, onValue, ref, serverTimestamp as rtdbNow, update } from 'firebase/database';
+import type { TimelineEntry } from './board';
 import { fb } from './firebase';
 import type { RunMode } from './types';
 
-export const APP_VERSION = '0.2.0';
+export const APP_VERSION = '0.3.0';
 export const HEARTBEAT_MS = 30_000;
 
 /** Realtime DB status/{neisCode}/{channel} 에 기록되는 실시간 상태 */
@@ -33,6 +34,16 @@ export interface ChannelStatus {
   failedCount: number;
   skippedCount: number;
   appVersion: string;
+  /** 운영 중인 담당 교사 (이름 또는 이메일) */
+  operator?: string;
+  /** 보고하는 PC의 id (presence와 같은 값) */
+  deviceId?: string;
+  /** 이 PC가 쓰는 시간표의 지문 — 서버 설정에서 계산한 값과 다르면 관리자 화면에 경고 */
+  planHash?: string;
+  /** 이 PC가 실제로 틀 방송과 각각의 결과 (자동 방송 중일 때만) */
+  timeline?: TimelineEntry[] | null;
+  /** 자동 방송 중인 날짜 (리허설은 null) */
+  runDate?: string | null;
 }
 
 export type PlayResult = 'played' | 'skipped' | 'failed' | 'manual';
