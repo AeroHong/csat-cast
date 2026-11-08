@@ -154,8 +154,58 @@ async function makeAdminId(id: string, password: string | undefined) {
   console.log(`admin 권한 부여 — 로그인 화면 [관리자·테스트 계정]에서 ID '${id}'로 로그인`);
 }
 
+/**
+ * 시연·리허설용 테스트 학교 (시험장 번호 d13-99, 사용 신청 학교 목록에는 넣지 않음)
+ * 로그인: '관리자·테스트 계정'에 ID만 입력 → {id}@csat-cast.app, claim schoolId=d13-99
+ * 관리자 현황판에 한 줄로 보이므로 수능 전에 remove-test-school 로 지운다.
+ */
+const TEST_SCHOOL = 'd13-99';
+async function makeTestSchool(id: string, password: string | undefined) {
+  if (!/^[a-z][a-z0-9._-]{2,29}$/i.test(id)) throw new Error('ID는 영문자로 시작하는 3~30자(영문·숫자·._-)로 정하세요.');
+  if (!password || password.length < 8) throw new Error('비밀번호는 8자 이상으로 정하세요.');
+  await db.doc(`schools/${TEST_SCHOOL}`).set(
+    {
+      name: '테스트 학교',
+      examNo: 99,
+      special: false,
+      venueType: '테스트',
+      inquiryRooms: 'split',
+      endPeriod: 4,
+      inquiryNote: '연수·리허설용 테스트 학교 (수능 전 삭제)',
+      channels: [{ id: 'main', label: '전체 방송', templateId: csatTemplateId('split', 4) }],
+    },
+    { merge: true },
+  );
+  const email = `${id.toLowerCase()}@csat-cast.app`;
+  let uid: string;
+  try {
+    const u = await auth.getUserByEmail(email);
+    if (u.customClaims?.role === 'admin') throw new Error(`${email} 은 관리자 계정이라 테스트 학교로 쓸 수 없습니다.`);
+    await auth.updateUser(u.uid, { password, disabled: false });
+    uid = u.uid;
+  } catch (e) {
+    if ((e as { code?: string }).code !== 'auth/user-not-found') throw e;
+    uid = (await auth.createUser({ email, password, displayName: '테스트 학교' })).uid;
+  }
+  await auth.setCustomUserClaims(uid, { role: 'school', schoolId: TEST_SCHOOL });
+  console.log(`테스트 학교 ${TEST_SCHOOL} + 계정 ${email} 준비 — '관리자·테스트 계정'에서 ID '${id}'로 로그인`);
+}
+async function removeTestSchool() {
+  const users = (await auth.listUsers(1000)).users.filter((u) => u.customClaims?.schoolId === TEST_SCHOOL);
+  for (const u of users) {
+    await auth.deleteUser(u.uid);
+    console.log(`계정 삭제: ${u.email}`);
+  }
+  const assets = await db.collection(`schools/${TEST_SCHOOL}/assets`).get();
+  for (const d of assets.docs) await d.ref.delete();
+  await db.doc(`schools/${TEST_SCHOOL}`).delete();
+  console.log(`테스트 학교 ${TEST_SCHOOL} 삭제 (현황판 실시간 상태는 RTDB status/${TEST_SCHOOL} 에 남을 수 있음)`);
+}
+
 if (cmd === 'templates') await seedTemplates();
+else if (cmd === 'test-school' && arg) await makeTestSchool(arg, process.argv[4]);
+else if (cmd === 'remove-test-school') await removeTestSchool();
 else if (cmd === 'schools' && arg) await seedSchools(arg);
 else if (cmd === 'admin' && arg) await makeAdmin(arg);
 else if (cmd === 'admin-id' && arg) await makeAdminId(arg, process.argv[4]);
-else console.log('사용법: node scripts/seed.ts templates | schools <csv> | admin <email> | admin-id <id> <password>');
+else console.log('사용법: node scripts/seed.ts templates | schools <csv> | admin <email> | admin-id <id> <password> | test-school <id> <password> | remove-test-school');
