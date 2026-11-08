@@ -129,7 +129,33 @@ async function makeAdmin(email: string) {
   console.log(`${email} 에 admin 권한 부여 (다시 로그인해야 적용)`);
 }
 
+/**
+ * ID·비밀번호로 로그인하는 관리자 계정을 만들거나 비밀번호를 바꾼다.
+ * 로그인 화면 '관리자·테스트 계정'에 ID만 입력하면 {id}@csat-cast.app 으로 로그인된다.
+ */
+async function makeAdminId(id: string, password: string | undefined) {
+  if (!/^[a-z][a-z0-9._-]{2,29}$/i.test(id)) throw new Error('ID는 영문자로 시작하는 3~30자(영문·숫자·._-)로 정하세요.');
+  if (/^\d{7,10}$/.test(id) || /^d\d+-\d+$/i.test(id)) throw new Error('학교 코드·시험장 번호와 같은 형식의 ID는 쓸 수 없습니다.');
+  if (!password || password.length < 8) throw new Error('비밀번호는 8자 이상으로 정하세요.');
+  const email = `${id.toLowerCase()}@csat-cast.app`;
+  let uid: string;
+  try {
+    const u = await auth.getUserByEmail(email);
+    if (u.customClaims?.schoolId) throw new Error(`${email} 은 학교 권한이 있는 계정이라 관리자로 바꿀 수 없습니다.`);
+    await auth.updateUser(u.uid, { password, disabled: false });
+    uid = u.uid;
+    console.log(`${email} 비밀번호를 바꿨습니다.`);
+  } catch (e) {
+    if ((e as { code?: string }).code !== 'auth/user-not-found') throw e;
+    uid = (await auth.createUser({ email, password, displayName: `관리자 ${id}` })).uid;
+    console.log(`${email} 계정을 만들었습니다.`);
+  }
+  await auth.setCustomUserClaims(uid, { role: 'admin' });
+  console.log(`admin 권한 부여 — 로그인 화면 [관리자·테스트 계정]에서 ID '${id}'로 로그인`);
+}
+
 if (cmd === 'templates') await seedTemplates();
 else if (cmd === 'schools' && arg) await seedSchools(arg);
 else if (cmd === 'admin' && arg) await makeAdmin(arg);
-else console.log('사용법: node scripts/seed.ts templates | schools <csv> | admin <email>');
+else if (cmd === 'admin-id' && arg) await makeAdminId(arg, process.argv[4]);
+else console.log('사용법: node scripts/seed.ts templates | schools <csv> | admin <email> | admin-id <id> <password>');

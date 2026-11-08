@@ -21,6 +21,7 @@
   - 자동 방송 중 로그인이 끊겨도 방송 화면은 닫히지 않고 그대로 송출한다 (서버 보고만 중단, 화면에 경고).
   - 신청서의 나이스 학교코드 칸은 형식만 검사한다 (추후 자동 확인용).
 - **관리자**: `node scripts/seed.ts admin <이메일>`로 role=admin을 준 계정. Google 또는 '관리자·테스트 계정'(이메일·비밀번호)으로 로그인.
+  - ID·비밀번호 관리자: `node scripts/seed.ts admin-id <ID> <비밀번호>` → '관리자·테스트 계정'에 ID만 입력(내부적으로 `<ID>@csat-cast.app`). 다시 실행하면 비밀번호가 바뀐다. 학교 코드 형식의 ID는 거부.
 - **테스트 학교 9999999**: 예전 방식의 공용 계정(`9999999@csat-cast.app`)도 계속 쓸 수 있다.
 - 학교 id: 나이스 코드를 모르는 시험장은 `d{지구}-{시험장 번호}`(예: 선유고 `d13-20`).
 - 처음 배포할 때 Firebase 콘솔 → Authentication → 로그인 방법에서 **Google**을 사용 설정해야 한다 (승인된 도메인: `csat-cast.web.app`, `localhost`).
@@ -112,6 +113,7 @@ set GOOGLE_APPLICATION_CREDENTIALS=service-account.json
 node scripts/seed.ts templates
 node scripts/seed.ts schools seed/schools.csv
 node scripts/seed.ts admin <관리자 이메일>
+node scripts/seed.ts admin-id <관리자 ID> <비밀번호>   # 선택: ID·비밀번호 관리자
 ```
 Functions(`minInstances: 1`) 사용으로 Blaze 요금제가 필요하다.
 

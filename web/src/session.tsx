@@ -56,7 +56,8 @@ async function readClaims(u: User | null, force = false): Promise<Claims> {
   const isAdmin = t.claims.role === 'admin';
   const claimSchool = typeof t.claims.schoolId === 'string' && t.claims.schoolId ? t.claims.schoolId : null;
   const legacy = u.email?.endsWith(LEGACY_DOMAIN) ? u.email.slice(0, -LEGACY_DOMAIN.length) : null;
-  return { isAdmin, schoolId: claimSchool ?? legacy };
+  // 관리자 ID 계정({id}@csat-cast.app)은 예전 학교 공용 계정과 형식이 같으므로 학교로 읽지 않는다
+  return { isAdmin, schoolId: claimSchool ?? (isAdmin ? null : legacy) };
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {

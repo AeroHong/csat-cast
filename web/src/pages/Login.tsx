@@ -97,7 +97,7 @@ export default function Login() {
                   <Stack component="form" spacing={1.5} onSubmit={submit}>
                     <TextField
                       size="small"
-                      label="계정 (이메일 또는 테스트 학교 코드)"
+                      label="관리자 ID 또는 이메일"
                       value={id}
                       onChange={(e) => setId(e.target.value)}
                       autoComplete="username"
