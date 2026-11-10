@@ -169,6 +169,10 @@ export function judge(r: Omit<ChannelRow, 'health' | 'reasons'>, now: number): {
     if (missing.length) bad.push(`송출 보고 없음: ${missing.map(([e]) => `${e.time.slice(0, 5)} ${e.label}`).join(', ')}`);
     const failed = cells.filter(([, c]) => c.kind === 'failed');
     if (failed.length) bad.push(`재생 실패: ${failed.map(([e]) => `${e.time.slice(0, 5)} ${e.label}`).join(', ')}`);
+    const cut = cells.filter(([, c]) => c.kind === 'cut');
+    if (cut.length) bad.push(`방송 끊김: ${cut.map(([e]) => `${e.time.slice(0, 5)} ${e.label}${e.d ? ` (${e.d})` : ''}`).join(', ')}`);
+    const userCut = cells.filter(([, c]) => c.kind === 'userCut');
+    if (userCut.length) warn.push(`담당자 재생 정지: ${userCut.map(([e]) => `${e.time.slice(0, 5)} ${e.label}`).join(', ')}`);
     const skipped = cells.filter(([, c]) => c.kind === 'skipped');
     if (skipped.length) warn.push(`건너뜀: ${skipped.map(([e]) => `${e.time.slice(0, 5)} ${e.label}`).join(', ')}`);
   } else {

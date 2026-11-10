@@ -1,4 +1,4 @@
-import { audioEngine, type AudioEngine, type PlayHandle } from './audio';
+import { audioEngine, type AudioEngine, type PlayEnd, type PlayHandle } from './audio';
 import { serverClock, type ServerClock } from './clock';
 import type { Reporter } from './reporter';
 import { restoreStates } from './runStore';
@@ -11,6 +11,50 @@ export interface PlayerEvent {
   cueId?: string;
   level: 'info' | 'warn' | 'error';
   message: string;
+}
+
+/**
+ * 끝까지 정상으로 나가지 않은 방송.
+ * - cut: 중간에 끊김 (끝까지 안 나감 — 창 닫힘·새로고침·자동 방송 중지 등)
+ * - gap: 끝까지 나갔지만 재생 중 소리가 끊겼다 이어짐 (오디오 출력 멈춤·출력 장치 바뀜)
+ * - stopped: 담당자가 [정지]로 직접 멈춤
+ */
+export type IssueKind = 'cut' | 'gap' | 'stopped';
+
+export interface CueIssue {
+  kind: IssueKind;
+  /** 실제로 재생한 길이 (모르면 null — 창이 닫혀 끊긴 경우) */
+  playedMs: number | null;
+  durationMs: number | null;
+  gapMs: number;
+  detail: string;
+}
+
+export const ISSUE_LABEL: Record<IssueKind, string> = { cut: '중간 끊김', gap: '끊김 있음', stopped: '담당자 정지' };
+
+/** 음원 길이보다 이만큼 넘게 짧게 재생했으면 '끝까지 안 나감' (디코딩·시계 단위 오차 감안) */
+export const CUT_TOLERANCE_MS = 300;
+/** 재생 중 소리가 이만큼 이상 멈췄으면 '끊김' (오디오 시계 갱신 단위 오차 감안) */
+export const GAP_TOLERANCE_MS = 700;
+
+const sec = (ms: number) => `${(ms / 1000).toFixed(1)}초`;
+
+/** 재생 결과 → 문제가 있으면 판정, 끝까지 끊김 없이 나갔으면 null */
+export function judgePlay(end: PlayEnd, byUser: boolean): CueIssue | null {
+  const cut = end.durationMs - end.playedMs > CUT_TOLERANCE_MS;
+  const gap = end.gapMs >= GAP_TOLERANCE_MS;
+  const parts: string[] = [];
+  if (cut) parts.push(`${sec(end.durationMs)} 중 ${sec(end.playedMs)}에서 멈춤`);
+  if (gap) parts.push(`재생 중 ${sec(end.gapMs)} 동안 소리 멈춤`);
+  for (const n of end.notes) if (!(gap && n.includes('멈춤'))) parts.push(n);
+  if (!parts.length) return null;
+  return {
+    kind: cut ? (byUser ? 'stopped' : 'cut') : 'gap',
+    playedMs: end.playedMs,
+    durationMs: end.durationMs,
+    gapMs: end.gapMs,
+    detail: parts.join(', '),
+  };
 }
 
 export interface PlayerSnapshot {
@@ -28,6 +72,8 @@ export interface PlayerSnapshot {
   startedAt: Record<string, number>;
   /** 담당자가 [지금 재생]으로 직접 내보낸 큐 */
   manual: string[];
+  /** 끝까지 정상으로 나가지 않은 방송 (큐 id → 판정). 상태는 '완료'라도 여기 있으면 정상이 아니다 */
+  issues: Record<string, CueIssue>;
   playing: string[];
   events: PlayerEvent[];
   /** 지금 해결이 필요한 문제 (상태판에 빨간색으로 표시) */
@@ -64,6 +110,13 @@ export class PlayerController {
   private manual = new Set<string>();
   private states: Record<string, CueState> = {};
   private handles = new Map<string, PlayHandle>();
+  /** 재생 핸들 → 어느 큐의 재생인지 (수동 재생은 handles 키가 따로라서) */
+  private handleCue = new Map<PlayHandle, { item: PlannedCue; manual: boolean }>();
+  /** 담당자가 직접 멈춘 재생 */
+  private userStopped = new WeakSet<PlayHandle>();
+  /** 결과를 이미 확정한 재생 (정지 즉시 확정 + 늦게 오는 끝남 이벤트 중복 방지) */
+  private settled = new WeakSet<PlayHandle>();
+  private issues: Record<string, CueIssue> = {};
   /** 이 진행기가 디코딩을 요청해 둔 음원 (필요 없어지면 메모리에서 내린다) */
   private prepared = new Set<string>();
   private events: PlayerEvent[] = [];
@@ -96,6 +149,8 @@ export class PlayerController {
       date?: string;
       starts?: Record<string, number>;
       examDelays?: Record<string, ManualDelay>;
+      /** 저장된 재생 문제 판정 (이어하기) */
+      issues?: Record<string, CueIssue>;
     } = {},
   ) {
     this.disarm(false);
@@ -110,6 +165,17 @@ export class PlayerController {
     this.stoppedByUser = false;
     const now = this.clock.now();
     this.states = restoreStates(this.plan, opts.restore, now);
+    this.issues = {};
+    for (const { cue } of this.plan) {
+      const saved = opts.issues?.[cue.id];
+      if (saved && this.states[cue.id] === 'done') this.issues[cue.id] = saved;
+      // 재생 중에 창이 닫히거나 새로고침되면 그 방송은 거기서 끊겼다 (이어하기에서는 다시 내지 않으므로 완료로 남는다)
+      else if (opts.restore?.[cue.id] === 'playing' && this.states[cue.id] === 'done') {
+        const detail = '재생 중 창이 닫히거나 새로고침되어 끊김';
+        this.issues[cue.id] = { kind: 'cut', playedMs: null, durationMs: null, gapMs: 0, detail };
+        this.push('error', `${ISSUE_LABEL.cut}: ${cue.label} — ${detail}`, cue.id);
+      }
+    }
     const v = Object.values(this.states);
     const label = mode === 'live' ? '실전' : '테스트';
     if (opts.restore) {
@@ -134,6 +200,8 @@ export class PlayerController {
       this.push(byUser ? 'warn' : 'info', '자동 방송 중지');
       this.stoppedByUser = byUser;
     }
+    // 재생 중이던 방송은 여기서 끊긴다. 결과 기록이 바로 만들어지므로 지금 판정한다
+    this.settleStarted(byUser);
     this.audio.stopAll();
     this.handles.clear();
     for (const id of this.prepared) this.audio.release(id);
@@ -180,7 +248,8 @@ export class PlayerController {
       // 본령을 직접 울렸으면 그때 시험이 시작된 것이므로 뒤 방송을 그에 맞춘다
       this.recordStart(item, now);
       this.handles.set(`manual-${cueId}-${now}`, h);
-      void h.ended.then(() => this.emit());
+      this.handleCue.set(h, { item, manual: true });
+      void h.ended.then((end) => this.finishPlay(h, end));
       this.reporter?.log({
         cueId,
         label: item.cue.label,
@@ -198,9 +267,66 @@ export class PlayerController {
   }
 
   stopAll() {
+    this.settleStarted(true);
     this.audio.stopAll();
     this.handles.clear();
     this.push('warn', '모든 재생 정지');
+    this.emit();
+  }
+
+  /** 시간표 줄의 [정지]: 그 방송(같은 음원)의 재생을 담당자가 멈춤 */
+  stopCue(cueId: string) {
+    const item = this.plan.find((p) => p.cue.id === cueId);
+    if (!item) return;
+    for (const [h, info] of this.handleCue) if (info.item.cue.assetId === item.cue.assetId) this.userStopped.add(h);
+    this.audio.stopAsset(item.cue.assetId);
+  }
+
+  /** 이미 소리가 나기 시작한 재생을 지금 위치로 판정한다 (곧 멈출 때) */
+  private settleStarted(byUser: boolean) {
+    const now = this.clock.now();
+    for (const [h, info] of [...this.handleCue]) {
+      if (byUser) this.userStopped.add(h);
+      if (h.startAt > now || this.settled.has(h)) continue;
+      if (!info.manual && this.states[info.item.cue.id] === 'scheduled') this.states[info.item.cue.id] = 'playing';
+      this.finishPlay(h, h.progress());
+    }
+  }
+
+  /** 재생 하나가 끝났을 때(또는 멈출 때) 결과 확정: 끝까지 끊김 없이 나갔을 때만 정상 */
+  private finishPlay(h: PlayHandle, end: PlayEnd) {
+    if (this.settled.has(h)) return;
+    this.settled.add(h);
+    const info = this.handleCue.get(h);
+    this.handleCue.delete(h);
+    if (!info) return;
+    const { item, manual } = info;
+    const id = item.cue.id;
+    if (manual) {
+      for (const [k, v] of this.handles) if (v === h) this.handles.delete(k);
+    } else {
+      // 취소된 예약의 종료 이벤트가 늦게 와서 새로 건 예약을 완료로 바꾸지 않도록 같은 예약인지 확인
+      const current = this.handles.get(id);
+      if (current && current !== h) return;
+      this.handles.delete(id);
+      const st = this.states[id];
+      // 자동 방송을 멈춘 뒤 늦게 끝난 예약(소리 나기 전에 취소됨)은 송출로 치지 않는다
+      if (this.mode === 'idle' || (st !== 'playing' && st !== 'scheduled')) {
+        this.emit();
+        return;
+      }
+      this.states[id] = 'done';
+    }
+    const issue = judgePlay(end, this.userStopped.has(h));
+    if (issue) {
+      this.issues[id] = issue;
+      this.push(issue.kind === 'stopped' ? 'warn' : 'error', `${ISSUE_LABEL[issue.kind]}: ${item.cue.label} — ${issue.detail}`, id);
+      this.report(item, issue.kind, h.startAt, issue.detail);
+    } else if (!manual) {
+      delete this.issues[id];
+      this.push('info', `송출 완료: ${item.cue.label}`, id);
+      this.report(item, 'played', h.startAt);
+    }
     this.emit();
   }
 
@@ -221,6 +347,7 @@ export class PlayerController {
       examDelays: { ...this.examDelays },
       startedAt: { ...this.startedAt },
       manual: [...this.manual],
+      issues: { ...this.issues },
       playing: Object.entries(this.states)
         .filter(([, s]) => s === 'playing')
         .map(([id]) => id),
@@ -359,21 +486,11 @@ export class PlayerController {
     try {
       const h = this.audio.playAt(cue.assetId, at, now);
       this.handles.set(cue.id, h);
+      this.handleCue.set(h, { item, manual: false });
       this.states[cue.id] = 'scheduled';
       this.startedAt[cue.id] = h.startAt;
       this.recordStart(item, h.startAt);
-      void h.ended.then(() => {
-        // 취소된 예약의 종료 이벤트가 늦게 와서 새로 건 예약을 완료로 바꾸지 않도록 같은 예약인지 확인
-        const current = this.handles.get(cue.id);
-        if (current && current !== h) return;
-        if (this.states[cue.id] === 'playing' || this.states[cue.id] === 'scheduled') {
-          this.states[cue.id] = 'done';
-          this.push('info', `송출 완료: ${cue.label}`, cue.id);
-          this.report(item, 'played', h.startAt);
-          this.emit();
-        }
-        this.handles.delete(cue.id);
-      });
+      void h.ended.then((end) => this.finishPlay(h, end));
     } catch (e) {
       this.states[cue.id] = 'failed';
       this.push('error', `재생 실패: ${cue.label} (${(e as Error).message})`, cue.id);
@@ -443,7 +560,7 @@ export class PlayerController {
     this.delays = r.delays;
   }
 
-  private report(item: PlannedCue, result: 'played' | 'skipped' | 'failed', startedAt: number | null, detail?: string) {
+  private report(item: PlannedCue, result: 'played' | 'skipped' | 'failed' | IssueKind, startedAt: number | null, detail?: string) {
     if (this.mode === 'idle') return;
     this.reporter?.log({
       cueId: item.cue.id,

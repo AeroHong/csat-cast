@@ -1,4 +1,5 @@
 // 확장자를 붙여 scripts/(node 직접 실행)에서도 불러올 수 있게 한다
+import type { CueIssue } from './player';
 import { resolveCues, type CueState, type PlannedCue } from './scheduler.ts';
 import type { Cue, SchoolProfile, Template } from './types';
 
@@ -9,7 +10,8 @@ import type { Cue, SchoolProfile, Template } from './types';
  */
 
 /** 학교 PC가 보고하는 큐 하나의 상태 */
-export type CueReport = 'pending' | 'scheduled' | 'playing' | 'played' | 'skipped' | 'failed' | 'manual';
+/** cut: 끝까지 안 나갔거나 재생 중 끊김, userCut: 담당자가 재생 정지 */
+export type CueReport = 'pending' | 'scheduled' | 'playing' | 'played' | 'skipped' | 'failed' | 'manual' | 'cut' | 'userCut';
 
 /** status/{학교}/{채널}/timeline 의 한 줄 */
 export interface TimelineEntry {
@@ -23,6 +25,8 @@ export interface TimelineEntry {
   s: CueReport;
   /** 실제로 소리가 시작된 시각 */
   t?: number;
+  /** 끊김 사유 (cut·userCut) */
+  d?: string;
 }
 
 /** 시각이 이만큼 지났는데 송출 보고가 없으면 '보고 없음'(빨강) */
@@ -63,14 +67,17 @@ export function toTimeline(
   states: Record<string, CueState>,
   startedAt: Record<string, number>,
   manual: Set<string> | string[],
+  issues: Record<string, CueIssue> = {},
 ): TimelineEntry[] {
   const man = new Set(manual);
   return plan.map(({ cue, at }) => {
     const st = states[cue.id] ?? 'pending';
-    const s: CueReport = st === 'done' ? (man.has(cue.id) ? 'manual' : 'played') : st;
+    const issue = st === 'done' ? issues[cue.id] : undefined;
+    const s: CueReport = issue ? (issue.kind === 'stopped' ? 'userCut' : 'cut') : st === 'done' ? (man.has(cue.id) ? 'manual' : 'played') : st;
     const e: TimelineEntry = { id: cue.id, time: cue.time, at, label: cue.label, period: cue.period, s };
     const t = startedAt[cue.id];
-    if (t !== undefined && (s === 'played' || s === 'manual' || s === 'playing')) e.t = t;
+    if (t !== undefined && (s === 'played' || s === 'manual' || s === 'playing' || s === 'cut' || s === 'userCut')) e.t = t;
+    if (issue) e.d = issue.detail;
     return e;
   });
 }
@@ -82,6 +89,8 @@ export type CellKind =
   | 'playing'
   | 'played'
   | 'manual'
+  | 'cut' // 끝까지 안 나갔거나 재생 중 끊김
+  | 'userCut' // 담당자가 재생 정지
   | 'skipped'
   | 'failed'
   | 'missing' // 시각이 지났는데 송출 보고 없음
@@ -107,6 +116,10 @@ export function cellState(entry: TimelineEntry | undefined, armed: boolean, onli
       return { kind: 'played', driftMs: drift, at };
     case 'manual':
       return { kind: 'manual', driftMs: drift, at };
+    case 'cut':
+      return { kind: 'cut', driftMs: drift, at };
+    case 'userCut':
+      return { kind: 'userCut', driftMs: drift, at };
     case 'skipped':
       return { kind: 'skipped', at };
     case 'failed':
@@ -122,7 +135,7 @@ export function cellState(entry: TimelineEntry | undefined, armed: boolean, onli
 }
 
 /** 문제로 볼 칸 (빨강) */
-export const BAD_CELLS: ReadonlySet<CellKind> = new Set(['failed', 'missing']);
+export const BAD_CELLS: ReadonlySet<CellKind> = new Set(['failed', 'missing', 'cut']);
 
 /** 표의 열: 여러 학교 시간표의 방송 시각을 합친 것 (같은 시각은 한 열) */
 export interface Column {

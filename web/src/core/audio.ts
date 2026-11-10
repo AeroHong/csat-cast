@@ -17,12 +17,44 @@ export interface NowPlaying {
   durationSec: number;
 }
 
+/**
+ * 재생 한 번이 실제로 어떻게 나갔는지 (오디오 시계 기준).
+ * 음원은 미리 전부 디코딩해 두므로 네트워크 때문에 끊기지는 않는다. 끊김은 정지 조작과 오디오 출력 멈춤뿐이다.
+ */
+export interface PlayEnd {
+  /** 음원 중 실제로 재생한 길이 (끝까지 나갔으면 durationMs와 같음) */
+  playedMs: number;
+  durationMs: number;
+  /** 재생하는 동안 오디오 출력이 멈춰 소리가 나지 않은 시간 (멈췄다 이어진 만큼) */
+  gapMs: number;
+  /** 재생 중에 생긴 일 (오디오 출력 멈춤·출력 장치 바뀜 등) */
+  notes: string[];
+}
+
 export interface PlayHandle {
   /** 실제 재생이 시작될 서버 시각 (epoch ms) */
   startAt: number;
   durationMs: number;
-  ended: Promise<void>;
+  ended: Promise<PlayEnd>;
+  /** 지금까지의 재생 결과 (재생 중에 끊을 때 바로 판정하는 용도) */
+  progress(): PlayEnd;
   stop(): void;
+}
+
+/** 재생 위치 계산용: 재생 시작 때의 오디오 시계·벽시계 짝. 둘의 차이가 벌어진 만큼 출력이 멈춰 있었다 */
+interface Playback {
+  key: number;
+  assetId: string;
+  /** 재생 시작 (AudioContext 시계, 초) */
+  startCtx: number;
+  /** 재생 시작 (performance.now 기준, ms) */
+  startPerf: number;
+  durationSec: number;
+  /** stop()을 부른 순간의 오디오 시계 (끝까지 갔으면 null) */
+  stopCtx: number | null;
+  notes: string[];
+  /** 끝남 처리 (정지 즉시 또는 onended 중 먼저 오는 쪽, 한 번만) */
+  finish: () => void;
 }
 
 /**
@@ -45,7 +77,7 @@ export class AudioEngine {
   private peaksById = new Map<string, Float32Array>();
   private active = new Set<AudioBufferSourceNode>();
   /** 재생 위치 표시용: 소스별 음원·시작 시각(AudioContext 시계)·길이 */
-  private playbacks = new Map<AudioBufferSourceNode, { key: number; assetId: string; startCtx: number; durationSec: number }>();
+  private playbacks = new Map<AudioBufferSourceNode, Playback>();
   private playbackSeq = 0;
   private analyser: AnalyserNode | null = null;
 
@@ -95,6 +127,8 @@ export class AudioEngine {
     if (!ctx.setSinkId) return;
     if ((typeof ctx.sinkId === 'string' ? ctx.sinkId : '') === deviceId) return;
     await ctx.setSinkId(deviceId);
+    // 재생 도중에 출력 장치가 바뀌면 그 방송의 일부는 다른 장치(앰프가 아닌 곳)로 나갔을 수 있다
+    this.noteSounding(deviceId ? '재생 중 출력 장치가 바뀜' : '재생 중 출력 장치가 기본 장치로 바뀜');
   }
 
   /** 음원을 내려받아 두었는가 (재생하려면 prepare로 디코딩까지 끝나야 함) */
@@ -244,21 +278,36 @@ export class AudioEngine {
     src.buffer = buffer;
     src.connect(this.master!);
     const startCtx = ctx.currentTime + delaySec;
-    src.start(startCtx);
-    this.active.add(src);
-    this.playbacks.set(src, { key: ++this.playbackSeq, assetId, startCtx, durationSec: buffer.duration });
-    const ended = new Promise<void>((resolve) => {
-      src.onended = () => {
+    const pb: Playback = {
+      key: ++this.playbackSeq,
+      assetId,
+      startCtx,
+      startPerf: performance.now() + delaySec * 1000,
+      durationSec: buffer.duration,
+      stopCtx: null,
+      notes: [],
+      finish: () => undefined,
+    };
+    const ended = new Promise<PlayEnd>((resolve) => {
+      let done = false;
+      pb.finish = () => {
+        if (done) return;
+        done = true;
+        resolve(this.measure(pb));
         this.active.delete(src);
         this.playbacks.delete(src);
-        resolve();
       };
     });
+    src.onended = () => pb.finish();
+    src.start(startCtx);
+    this.active.add(src);
+    this.playbacks.set(src, pb);
     return {
       startAt: serverNow + delaySec * 1000,
       durationMs: Math.round(buffer.duration * 1000),
       ended,
-      stop: () => src.stop(),
+      progress: () => this.measure(pb),
+      stop: () => this.stopSource(src),
     };
   }
 
@@ -277,26 +326,56 @@ export class AudioEngine {
 
   /** 특정 음원의 재생만 정지 (시간표 줄의 [정지] 버튼) */
   stopAsset(assetId: string) {
-    for (const [src, p] of this.playbacks) {
-      if (p.assetId !== assetId) continue;
-      try {
-        src.stop();
-      } catch {
-        /* 이미 끝난 소스 */
-      }
-    }
+    for (const [src, p] of this.playbacks) if (p.assetId === assetId) this.stopSource(src);
   }
 
   stopAll() {
-    for (const s of this.active) {
-      try {
-        s.stop();
-      } catch {
-        /* 아직 시작 전이거나 이미 끝난 소스 */
-      }
+    // 끝남 처리(onended)에서 재생 결과를 계산하므로 목록은 각 소스가 끝날 때 지운다
+    for (const s of [...this.active]) this.stopSource(s);
+  }
+
+  /**
+   * 정지한 순간의 재생 위치를 남기고 멈춘다. 끝남 이벤트(onended)는 늦게 오고,
+   * 오디오 출력이 멈춰 있으면 아예 오지 않으므로 결과는 바로 확정한다.
+   */
+  private stopSource(src: AudioBufferSourceNode) {
+    const pb = this.playbacks.get(src);
+    if (pb && pb.stopCtx === null && this.ctx) pb.stopCtx = this.ctx.currentTime;
+    try {
+      src.stop();
+    } catch {
+      /* 아직 시작 전이거나 이미 끝난 소스 */
     }
-    this.active.clear();
-    this.playbacks.clear();
+    pb?.finish();
+  }
+
+  /**
+   * 재생 결과 계산. 오디오 시계는 출력이 멈추면 같이 멈추므로
+   * - 재생 위치 = 오디오 시계 경과 (정지했으면 정지 순간까지, 음원 길이를 넘지 않음)
+   * - 멈춘 시간 = 벽시계 경과 − 오디오 시계 경과 (출력이 멈췄다 이어진 만큼 벌어짐)
+   */
+  private measure(pb: Playback): PlayEnd {
+    const ctx = this.ctx;
+    const durationMs = Math.round(pb.durationSec * 1000);
+    if (!ctx) return { playedMs: 0, durationMs, gapMs: 0, notes: [...pb.notes] };
+    const nowCtx = ctx.currentTime;
+    const endCtx = Math.min(pb.stopCtx ?? nowCtx, pb.startCtx + pb.durationSec);
+    const playedMs = Math.round(Math.max(0, endCtx - pb.startCtx) * 1000);
+    // 출력이 멈춘 시간: 재생이 시작된 뒤 지금까지 벽시계와 오디오 시계의 차이 (시작 전이면 0)
+    const wallMs = performance.now() - pb.startPerf;
+    const ctxMs = (nowCtx - pb.startCtx) * 1000;
+    const gapMs = wallMs > 0 ? Math.max(0, Math.round(wallMs - Math.max(0, ctxMs))) : 0;
+    return { playedMs, durationMs, gapMs, notes: [...pb.notes] };
+  }
+
+  /** 지금 소리가 나는 재생에 사건을 적어 둔다 (재생 결과 판정에 씀) */
+  private noteSounding(note: string) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    for (const pb of this.playbacks.values()) {
+      const pos = ctx.currentTime - pb.startCtx;
+      if (pos >= 0 && pos < pb.durationSec && pb.stopCtx === null && !pb.notes.includes(note)) pb.notes.push(note);
+    }
   }
 
   private ensureContext(): AudioContext {
@@ -304,6 +383,11 @@ export class AudioEngine {
       this.ctx = new AudioContext({ latencyHint: 'playback' });
       this.master = this.ctx.createGain();
       this.master.connect(this.ctx.destination);
+      // 재생 도중 오디오 출력이 멈추면(절전·장치 분리·다른 프로그램이 장치를 가져감) 그 방송에 적어 둔다
+      const ctx = this.ctx;
+      ctx.addEventListener('statechange', () => {
+        if (ctx.state !== 'running') this.noteSounding('재생 중 오디오 출력이 멈춤');
+      });
       // 화면의 스펙트럼 표시용 분석기. 송출 경로와 따로 갈라 두어 표시 쪽 문제가 방송 소리에 영향을 주지 않게 한다.
       this.analyser = this.ctx.createAnalyser();
       this.analyser.fftSize = 2048;

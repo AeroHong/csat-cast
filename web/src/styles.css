@@ -315,6 +315,8 @@ table.matrix { border-collapse: separate; border-spacing: 0; font-size: 0.8rem; 
 .cell.manual { background: var(--ok-bg); color: var(--ok); outline: 2px solid var(--ok); outline-offset: -2px; }
 .cell.skipped { background: var(--warn); color: #fff; }
 .cell.failed, .cell.missing { background: var(--bad); color: #fff; }
+.cell.cut { background: var(--bad); color: #fff; outline: 2px dashed #fff; outline-offset: -4px; }
+.cell.userCut { background: var(--warn-bg); color: var(--warn); outline: 2px solid var(--warn); outline-offset: -2px; }
 .cell.missing { animation: pulse 1s ease-in-out infinite; }
 .cell.offline { background: repeating-linear-gradient(45deg, var(--line) 0 3px, transparent 3px 6px); color: var(--muted); }
 @keyframes pulse { 50% { opacity: 0.55; } }
@@ -363,6 +365,11 @@ table.list { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 .list tr.sub td { background: var(--bg); }
 .list tr.r-failed td { background: var(--bad-bg); }
 .list tr.r-skipped td { background: var(--warn-bg); }
+.list tr.r-cut td, .list tr.r-gap td { background: var(--bad-bg); }
+.list tr.r-stopped td { background: var(--warn-bg); }
+.issue-bad { color: var(--bad); font-weight: 700; }
+.issue-warn { color: var(--warn); font-weight: 700; }
+.issue-bad small, .issue-warn small { font-weight: 400; color: var(--muted); }
 ol.preview { columns: 2 360px; margin: 4px 0; padding-left: 20px; font-size: 0.85rem; line-height: 1.6; }
 ul.audit { list-style: none; padding: 0; margin: 0; font-size: 0.85rem; max-height: 360px; overflow: auto; }
 ul.audit li { padding: 4px 0; border-bottom: 1px solid var(--line); }

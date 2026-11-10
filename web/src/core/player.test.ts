@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AudioEngine, PlayHandle } from './audio';
+import type { AudioEngine, PlayEnd, PlayHandle } from './audio';
 import type { ServerClock } from './clock';
-import { PlayerController } from './player';
+import { judgePlay, PlayerController } from './player';
+import { outcomesFrom, summarize } from './runReports';
 import type { PlannedCue } from './scheduler';
 
 /** 소리 켜짐/꺼짐을 바꿀 수 있는 가짜 오디오. 예약·정지 기록을 남긴다. */
@@ -9,7 +10,10 @@ class FakeAudio {
   state: AudioContextState = 'running';
   played: { assetId: string; at: number }[] = [];
   stopped: string[] = [];
-  private enders: (() => void)[] = [];
+  /** 진행 중인 재생 (끝내면 결과를 넘긴다) */
+  private plays: { assetId: string; end: (e: PlayEnd) => void; done: boolean }[] = [];
+  /** 정지하거나 중간 판정할 때의 재생 위치(ms). 음원 길이는 3000ms */
+  position = 1000;
   /** 디코딩 완료된 음원 (기본: 즉시 디코딩됨) */
   ready = new Set<string>();
   broken = new Set<string>();
@@ -45,17 +49,42 @@ class FakeAudio {
   }
   playAt(assetId: string, serverAt: number, serverNow: number): PlayHandle {
     this.played.push({ assetId, at: serverAt });
-    let end!: () => void;
-    const ended = new Promise<void>((r) => (end = r));
-    this.enders.push(end);
-    return { startAt: Math.max(serverAt, serverNow), durationMs: 3000, ended, stop: () => (this.stopped.push(assetId), end()) };
+    let resolve!: (e: PlayEnd) => void;
+    const ended = new Promise<PlayEnd>((r) => (resolve = r));
+    const play = {
+      assetId,
+      done: false,
+      end: (e: PlayEnd) => {
+        if (play.done) return;
+        play.done = true;
+        resolve(e);
+      },
+    };
+    this.plays.push(play);
+    const progress = (): PlayEnd => ({ playedMs: this.position, durationMs: 3000, gapMs: 0, notes: [] });
+    return {
+      startAt: Math.max(serverAt, serverNow),
+      durationMs: 3000,
+      ended,
+      progress,
+      stop: () => {
+        this.stopped.push(assetId);
+        play.end(progress());
+      },
+    };
   }
-  stopAll() {}
+  stopAsset(assetId: string) {
+    for (const p of this.plays) if (p.assetId === assetId && !p.done) (this.stopped.push(assetId), p.end({ playedMs: this.position, durationMs: 3000, gapMs: 0, notes: [] }));
+  }
+  stopAll() {
+    for (const p of this.plays) if (!p.done) p.end({ playedMs: this.position, durationMs: 3000, gapMs: 0, notes: [] });
+  }
   tryResume() {
     return Promise.resolve(this.state === 'running');
   }
-  endAll() {
-    this.enders.forEach((e) => e());
+  /** 진행 중인 재생을 모두 끝낸다 (기본: 끝까지 끊김 없이) */
+  endAll(over: Partial<PlayEnd> = {}) {
+    for (const p of this.plays) if (!p.done) p.end({ playedMs: 3000, durationMs: 3000, gapMs: 0, notes: [], ...over });
   }
 }
 
@@ -459,5 +488,136 @@ describe('담당자가 시험 종료를 늦춘다 (영어 듣기평가가 늦게
     ];
     player.arm(exam, 'test', { examDelays: { end: { ms: 60_000, fromAt: 60_000 } } });
     expect([at('10min'), at('end')]).toEqual([120_000, 180_000]);
+  });
+});
+
+describe('끝까지 정상으로 나갔는지 판정 (중간 끊김·끊김 있음·담당자 정지)', () => {
+  /** bell(10초) 재생을 시작시킨다 */
+  async function startBell() {
+    player.arm(plan, 'test');
+    await flush();
+    clock.t = 9_000;
+    tick();
+    clock.t = 10_500;
+    tick();
+    expect(player.snapshot().states.bell).toBe('playing');
+  }
+
+  it('음원 끝까지 끊김 없이 나가야 정상', async () => {
+    await startBell();
+    audio.endAll();
+    await flush();
+    const s = player.snapshot();
+    expect(s.states.bell).toBe('done');
+    expect(s.issues).toEqual({});
+    expect(s.events[0].message).toContain('송출 완료');
+  });
+
+  it('재생 중 소리가 멈췄다 이어지면 끝까지 나갔어도 "끊김 있음"', async () => {
+    await startBell();
+    audio.endAll({ gapMs: 2_400, notes: ['재생 중 오디오 출력이 멈춤'] });
+    await flush();
+    const s = player.snapshot();
+    expect(s.issues.bell.kind).toBe('gap');
+    expect(s.issues.bell.detail).toContain('2.4초 동안 소리 멈춤');
+    expect(s.events[0].message).not.toContain('송출 완료');
+    expect(outcomesFrom(s, false)[0].outcome).toBe('gap');
+  });
+
+  it('재생 중 출력 장치가 바뀌면 "끊김 있음"으로 남긴다', async () => {
+    await startBell();
+    audio.endAll({ notes: ['재생 중 출력 장치가 기본 장치로 바뀜'] });
+    await flush();
+    expect(player.snapshot().issues.bell.kind).toBe('gap');
+  });
+
+  it('시간표 [정지]로 멈추면 "담당자 정지" — 송출 완료로 기록하지 않고, 사고로 세지도 않는다', async () => {
+    await startBell();
+    audio.position = 1_200;
+    player.stopCue('bell');
+    await flush();
+    const s = player.snapshot();
+    expect(s.states.bell).toBe('done');
+    expect(s.issues.bell).toMatchObject({ kind: 'stopped', playedMs: 1_200 });
+    expect(s.issues.bell.detail).toContain('3.0초 중 1.2초에서 멈춤');
+    const out = outcomesFrom(s, true, true);
+    expect(out[0].outcome).toBe('userCut');
+    expect(summarize({ id: '1', mode: 'test', label: '', startedAt: 0, endedAt: 1, cues: out.slice(0, 1), incidents: [] }).ok).toBe(true);
+  });
+
+  it('[모든 재생 정지]도 담당자 정지', async () => {
+    await startBell();
+    player.stopAll();
+    await flush();
+    expect(player.snapshot().issues.bell.kind).toBe('stopped');
+  });
+
+  it('재생 중 자동 방송을 중지하면 그 자리에서 판정한다 (결과 기록이 바로 만들어지므로)', async () => {
+    await startBell();
+    player.disarm(true);
+    const s = player.snapshot();
+    expect(s.states.bell).toBe('done');
+    expect(s.issues.bell.kind).toBe('stopped');
+    expect(outcomesFrom(s, true, true)[0].outcome).toBe('userCut');
+  });
+
+  it('담당자 조작이 아닌 이유로 멈추면(날짜 바뀜 등) "중간 끊김"', async () => {
+    await startBell();
+    player.disarm(false);
+    expect(player.snapshot().issues.bell.kind).toBe('cut');
+  });
+
+  it('재생 중 창이 닫히거나 새로고침되면, 이어하기에서 그 방송을 "중간 끊김"으로 남긴다', () => {
+    clock.t = 11_000;
+    player.arm(plan, 'test', { restore: { bell: 'playing' } });
+    const s = player.snapshot();
+    expect(s.states.bell).toBe('done');
+    expect(s.issues.bell.kind).toBe('cut');
+    expect(outcomesFrom(s, false)[0].outcome).toBe('cut');
+  });
+
+  it('이어하기에서 저장된 판정을 그대로 이어받는다 (새로고침해도 정상으로 바뀌지 않음)', () => {
+    clock.t = 20_000;
+    const issue = { kind: 'gap' as const, playedMs: 3000, durationMs: 3000, gapMs: 1500, detail: 'x' };
+    player.arm(plan, 'test', { restore: { bell: 'done' }, issues: { bell: issue } });
+    expect(player.snapshot().issues.bell).toEqual(issue);
+  });
+
+  it('[지금 재생]으로 내보낸 방송도 끝까지 나갔는지 본다', async () => {
+    player.arm(plan, 'test');
+    clock.t = 20_000; // 타종 허용 5초 초과 → 건너뜀
+    tick();
+    await player.playNow('bell');
+    audio.position = 500;
+    player.stopCue('bell');
+    await flush();
+    const s = player.snapshot();
+    expect(s.issues.bell.kind).toBe('stopped');
+    expect(outcomesFrom(s, true)[0].outcome).toBe('userCut');
+  });
+
+  it('소리 나기 전에 취소된 예약(소리 꺼짐)은 판정하지 않고 다시 예약한다', async () => {
+    player.arm(plan, 'test');
+    clock.t = 8_500;
+    tick();
+    audio.state = 'suspended';
+    tick();
+    await flush();
+    expect(player.snapshot().states.bell).toBe('pending');
+    expect(player.snapshot().issues).toEqual({});
+  });
+});
+
+describe('judgePlay', () => {
+  const end = (o: Partial<PlayEnd>): PlayEnd => ({ playedMs: 60_000, durationMs: 60_000, gapMs: 0, notes: [], ...o });
+  it('시계 단위 오차(0.3초·0.7초 미만)는 정상', () => {
+    expect(judgePlay(end({ playedMs: 59_800, gapMs: 600 }), false)).toBeNull();
+  });
+  it('끝까지 안 나가면 중간 끊김(담당자가 멈췄으면 담당자 정지)', () => {
+    expect(judgePlay(end({ playedMs: 30_000 }), false)!.kind).toBe('cut');
+    expect(judgePlay(end({ playedMs: 30_000 }), true)!.kind).toBe('stopped');
+  });
+  it('소리가 멈췄던 시간이 있으면 끊김 있음', () => {
+    expect(judgePlay(end({ gapMs: 700 }), false)!.kind).toBe('gap');
   });
 });

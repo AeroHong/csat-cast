@@ -11,7 +11,18 @@ import type { RunMode } from './types';
 export const LATE_MS = 1_000;
 const MAX_REPORTS = 30;
 
-export type Outcome = 'played' | 'late' | 'manual' | 'skipped' | 'failed' | 'missed' | 'stopped' | 'pending';
+export type Outcome =
+  | 'played'
+  | 'late'
+  | 'manual'
+  | 'cut'
+  | 'gap'
+  | 'userCut'
+  | 'skipped'
+  | 'failed'
+  | 'missed'
+  | 'stopped'
+  | 'pending';
 
 export interface CueOutcome {
   id: string;
@@ -21,6 +32,8 @@ export interface CueOutcome {
   outcome: Outcome;
   /** 실제 시작 - 예정 (ms) */
   driftMs: number | null;
+  /** 끝까지 정상으로 안 나간 경우 사유 (예: "62.0초 중 38.2초에서 멈춤") */
+  detail?: string;
 }
 
 export interface Incident {
@@ -46,6 +59,9 @@ export const OUTCOME_LABEL: Record<Outcome, string> = {
   played: '정상',
   late: '늦음',
   manual: '수동 송출',
+  cut: '중간 끊김',
+  gap: '끊김 있음',
+  userCut: '담당자 정지',
   skipped: '건너뜀',
   failed: '실패',
   missed: '안 나감',
@@ -56,9 +72,10 @@ export const OUTCOME_LABEL: Record<Outcome, string> = {
 /**
  * 지금 플레이어 상태 → 방송별 결과.
  * ended=true면 끝까지 안 나간 방송은 '안 나감'(문제). 담당자가 직접 중지했으면 '중지로 남김'(문제 아님).
+ * 정상은 '시작했다'가 아니라 '음원 끝까지 끊김 없이 나갔다'. 끊겼으면 중간 끊김·끊김 있음·담당자 정지.
  */
 export function outcomesFrom(
-  snap: Pick<PlayerSnapshot, 'plan' | 'states' | 'startedAt' | 'manual'>,
+  snap: Pick<PlayerSnapshot, 'plan' | 'states' | 'startedAt' | 'manual'> & Partial<Pick<PlayerSnapshot, 'issues'>>,
   ended: boolean,
   stoppedByUser = false,
 ): CueOutcome[] {
@@ -67,13 +84,19 @@ export function outcomesFrom(
     const st = snap.states[cue.id] ?? 'pending';
     const started = snap.startedAt[cue.id];
     const driftMs = started === undefined ? null : Math.round(started - at);
+    const issue = snap.issues?.[cue.id];
     let outcome: Outcome;
     if (st === 'skipped') outcome = 'skipped';
     else if (st === 'failed') outcome = 'failed';
+    else if (issue) outcome = issue.kind === 'stopped' ? 'userCut' : issue.kind;
     else if (manual.has(cue.id)) outcome = 'manual';
-    else if (st === 'done' || st === 'playing') outcome = driftMs !== null && driftMs > LATE_MS ? 'late' : 'played';
+    // 회차가 끝났는데 아직 재생 중으로 남은 방송은 끝까지 나갔는지 알 수 없다
+    else if (st === 'playing' && ended) outcome = 'cut';
+    else if (st === 'done') outcome = driftMs !== null && driftMs > LATE_MS ? 'late' : 'played';
+    else if (st === 'playing') outcome = 'pending';
     else outcome = !ended ? 'pending' : stoppedByUser ? 'stopped' : 'missed';
-    return { id: cue.id, time: cue.time, label: cue.label, outcome, driftMs };
+    const detail = issue?.detail ?? (outcome === 'cut' ? '회차가 끝날 때까지 재생이 끝나지 않음' : undefined);
+    return { id: cue.id, time: cue.time, label: cue.label, outcome, driftMs, ...(detail ? { detail } : {}) };
   });
 }
 
@@ -108,7 +131,8 @@ export function summarize(r: RunReport): RunSummary {
     counts[c.outcome]++;
     if (c.driftMs !== null && (maxDriftMs === null || c.driftMs > maxDriftMs)) maxDriftMs = c.driftMs;
   }
-  const problems = counts.late + counts.manual + counts.skipped + counts.failed + counts.missed + r.incidents.length;
+  const problems =
+    counts.late + counts.manual + counts.cut + counts.gap + counts.skipped + counts.failed + counts.missed + r.incidents.length;
   return { total: r.cues.length, counts, maxDriftMs, problems, ok: problems === 0 };
 }
 
@@ -131,7 +155,7 @@ export function recurring(reports: RunReport[]): Recurring[] {
   };
   for (const r of done) {
     for (const c of r.cues)
-      if (c.outcome !== 'played' && c.outcome !== 'pending' && c.outcome !== 'stopped') bump(`${c.time.slice(0, 5)} ${c.label} — ${OUTCOME_LABEL[c.outcome]}`, r.id);
+      if (c.outcome !== 'played' && c.outcome !== 'pending' && c.outcome !== 'stopped' && c.outcome !== 'userCut') bump(`${c.time.slice(0, 5)} ${c.label} — ${OUTCOME_LABEL[c.outcome]}`, r.id);
     for (const i of r.incidents) bump(i.message.replace(/\d+/g, 'n').replace(/: .*$/, ''), r.id);
   }
   return [...counter.entries()]

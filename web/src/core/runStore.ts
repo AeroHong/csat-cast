@@ -1,3 +1,4 @@
+import type { CueIssue } from './player';
 import { initialStates, type CueState, type ManualDelay, type PlannedCue } from './scheduler';
 import type { RunMode } from './types';
 
@@ -21,6 +22,8 @@ export interface SavedRun {
   starts?: Record<string, number>;
   /** 담당자가 직접 늦춘 시험 (종료령 큐 id → 늦춘 시간) */
   examDelays?: Record<string, ManualDelay>;
+  /** 끝까지 정상으로 나가지 않은 방송 판정 (새로고침 뒤에도 정상으로 바뀌지 않게) */
+  issues?: Record<string, CueIssue>;
 }
 
 const key = (school: string, channel: string) => `csat-cast:run:${school}:${channel}`;

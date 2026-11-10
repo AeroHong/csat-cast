@@ -4,7 +4,7 @@ import type { TimelineEntry } from './board';
 import { fb } from './firebase';
 import type { RunMode } from './types';
 
-export const APP_VERSION = '0.3.0';
+export const APP_VERSION = '0.3.1';
 export const HEARTBEAT_MS = 30_000;
 
 /** Realtime DB status/{neisCode}/{channel} 에 기록되는 실시간 상태 */
@@ -54,7 +54,8 @@ export interface ChannelStatus {
   power?: { level: number; charging: boolean | null } | null;
 }
 
-export type PlayResult = 'played' | 'skipped' | 'failed' | 'manual';
+/** cut: 중간 끊김, gap: 끊김 있음(재생 중 소리 멈췄다 이어짐), stopped: 담당자가 재생 정지 */
+export type PlayResult = 'played' | 'skipped' | 'failed' | 'manual' | 'cut' | 'gap' | 'stopped';
 
 export interface PlayLog {
   school: string;

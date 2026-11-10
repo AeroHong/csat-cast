@@ -18,7 +18,7 @@ import {
   loadTemplates,
 } from '../core/catalog';
 import { OS_DRIFT_WARN_MS, serverClock, type ClockStatus } from '../core/clock';
-import { player, type PlayerSnapshot } from '../core/player';
+import { ISSUE_LABEL, player, type PlayerSnapshot } from '../core/player';
 import { deviceId, startPresence, watchPresence } from '../core/presence';
 import { HEARTBEAT_MS, Reporter } from '../core/reporter';
 import { describeRehearsal, loadRehearsals, rehearsalPlan, saveRehearsals, type ScheduledRehearsal } from '../core/rehearsals';
@@ -267,7 +267,7 @@ export default function Player() {
     r.start();
     // 새 보고기에는 방송별 진행 상태를 바로 다시 보낸다 (채널을 바꾸거나 다시 연 경우)
     const s0 = player.snapshot();
-    const tl0 = s0.armed && s0.mode !== 'idle' ? toTimeline(s0.plan, s0.states, s0.startedAt, s0.manual) : null;
+    const tl0 = s0.armed && s0.mode !== 'idle' ? toTimeline(s0.plan, s0.states, s0.startedAt, s0.manual, s0.issues) : null;
     timelineSent.current = JSON.stringify(tl0);
     r.update({ timeline: tl0 });
     const u = session.user;
@@ -366,7 +366,13 @@ export default function Player() {
     // 방송일 화면에서는 리허설을 시작할 수 없으므로, 돌고 있는 리허설은 전날 켜 둔 것 → 실제 방송으로 교체
     const saved = loadRun(neisCode, channel.id, today, planKey);
     runKeyRef.current = planKey;
-    player.arm(todayPlan(), armedToday.mode, { restore: saved?.states, starts: saved?.starts, examDelays: saved?.examDelays, date: today });
+    player.arm(todayPlan(), armedToday.mode, {
+      restore: saved?.states,
+      starts: saved?.starts,
+      examDelays: saved?.examDelays,
+      issues: saved?.issues,
+      date: today,
+    });
   }, [armedToday?.date, armedToday?.label, channel, loaded, cues, duplicateTab, runningToday, stoppedToday, neisCode, today]);
 
   // 이 PC에 저장된 리허설 예약 불러오기
@@ -388,6 +394,7 @@ export default function Player() {
       states: snap.states,
       starts: snap.starts,
       examDelays: snap.examDelays,
+      issues: snap.issues,
       stoppedByUser: false,
       savedAt: Date.now(),
       planKey: runKeyRef.current ?? (snap.runDate === today ? planKey : undefined),
@@ -447,7 +454,7 @@ export default function Player() {
   useEffect(() => {
     const r = reporterRef.current;
     if (!r) return;
-    const timeline = snap.armed && snap.mode !== 'idle' ? toTimeline(snap.plan, snap.states, snap.startedAt, snap.manual) : null;
+    const timeline = snap.armed && snap.mode !== 'idle' ? toTimeline(snap.plan, snap.states, snap.startedAt, snap.manual, snap.issues) : null;
     const key = JSON.stringify(timeline);
     if (key === timelineSent.current) return;
     timelineSent.current = key;
@@ -595,7 +602,13 @@ export default function Player() {
     if (!armedToday || !channel) return;
     void unlockAudio();
     runKeyRef.current = planKey;
-    player.arm(todayPlan(), armedToday.mode, { restore: savedRun?.states, starts: savedRun?.starts, examDelays: savedRun?.examDelays, date: today });
+    player.arm(todayPlan(), armedToday.mode, {
+      restore: savedRun?.states,
+      starts: savedRun?.starts,
+      examDelays: savedRun?.examDelays,
+      issues: savedRun?.issues,
+      date: today,
+    });
   }
 
   function stopAuto() {
@@ -603,13 +616,16 @@ export default function Player() {
     if (snap.mode === 'live' && !window.confirm('실전 자동 방송을 중지할까요? 이후 방송은 직접 해야 합니다.')) return;
     const runDate = snap.runDate;
     player.disarm(true);
+    // 중지하면서 끊긴 방송의 판정까지 담기도록 중지 뒤 상태로 저장
+    const after = player.snapshot();
     if (runDate && channel) {
       saveRun(neisCode, channel.id, {
         date: runDate,
         mode: snap.mode === 'idle' ? 'test' : snap.mode,
-        states: snap.states,
+        states: after.states,
         starts: snap.starts,
         examDelays: snap.examDelays,
+        issues: after.issues,
         stoppedByUser: true,
         savedAt: Date.now(),
         planKey: runKeyRef.current ?? (snap.runDate === today ? planKey : undefined),
@@ -1187,6 +1203,7 @@ export default function Player() {
                   <tbody>
                     {(snap.plan.length ? snap.plan : buildPlan(cues, today)).map(({ cue, at }) => {
                       const st = snap.states[cue.id] ?? 'pending';
+                      const issue = st === 'done' ? snap.issues[cue.id] : undefined;
                       // 실제로 소리가 나고 있는지는 오디오 엔진 기준 (수동 재생은 자동 송출 상태와 별개라 따로 확인)
                       const sounding = nowPlaying.find((p) => p.assetId === cue.assetId);
                       return (
@@ -1216,20 +1233,31 @@ export default function Player() {
                                   ▶ 재생 중 {formatDuration(sounding.positionSec)} / {formatDuration(sounding.durationSec)}
                                 </span>
                               ) : snap.plan.length ? (
-                                STATE_LABEL[st]
+                                issue ? (
+                                  <span className={issue.kind === 'stopped' ? 'issue-warn' : 'issue-bad'} title={issue.detail}>
+                                    {ISSUE_LABEL[issue.kind]}
+                                    <small> {issue.detail}</small>
+                                  </span>
+                                ) : (
+                                  STATE_LABEL[st]
+                                )
                               ) : (
                                 ''
                               )}
                             </td>
                             <td>
                               {sounding ? (
-                                <button className="small danger" onClick={() => audioEngine.stopAsset(cue.assetId)} title="이 음원 재생 정지">
+                                <button
+                                  className="small danger"
+                                  onClick={() => (snap.plan.length ? player.stopCue(cue.id) : audioEngine.stopAsset(cue.assetId))}
+                                  title="이 음원 재생 정지 (끝까지 안 나간 방송은 '담당자 정지'로 기록)"
+                                >
                                   ■ 정지
                                 </button>
                               ) : snap.plan.length && (st === 'done' || st === 'playing' || st === 'scheduled') ? (
                                 // 이미 송출했거나 곧 나갈 방송은 다시 누를 수 없다 (실전·테스트 모두, 같은 안내 두 번 송출 방지)
                                 <button className="small" disabled title={st === 'done' ? '이미 송출한 방송입니다' : '곧 자동으로 송출됩니다'}>
-                                  {st === 'done' ? '✓ 송출 완료' : '곧 송출'}
+                                  {st === 'done' ? (issue ? '송출함 (끊김)' : '✓ 송출 완료') : '곧 송출'}
                                 </button>
                               ) : (
                                 <button

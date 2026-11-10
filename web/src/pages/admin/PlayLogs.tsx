@@ -6,8 +6,16 @@ import type { PlayLog } from '../../core/reporter';
 import { kstDate, kstEpoch, kstTime } from '../../core/scheduler';
 import type { SchoolProfile } from '../../core/types';
 
-const RESULT: Record<PlayLog['result'], string> = { played: '송출', skipped: '건너뜀', failed: '실패', manual: '수동' };
-const ORDER: Record<PlayLog['result'], number> = { failed: 0, skipped: 1, manual: 2, played: 3 };
+const RESULT: Record<PlayLog['result'], string> = {
+  played: '송출',
+  skipped: '건너뜀',
+  failed: '실패',
+  manual: '수동',
+  cut: '중간 끊김',
+  gap: '끊김 있음',
+  stopped: '담당자 정지',
+};
+const ORDER: Record<PlayLog['result'], number> = { failed: 0, cut: 1, gap: 2, skipped: 3, stopped: 4, manual: 5, played: 6 };
 
 /** 송출 기록 (playLogs — 학교 PC가 남기며 수정·삭제 불가). 사후 증빙용 CSV 내려받기 */
 export default function PlayLogs({ schools, now }: { schools: SchoolProfile[]; now: number }) {
@@ -108,6 +116,8 @@ export default function PlayLogs({ schools, now }: { schools: SchoolProfile[]; n
             <div className="sum ok">수동 {count('manual')}</div>
             <div className="sum warn">건너뜀 {count('skipped')}</div>
             <div className="sum bad">실패 {count('failed')}</div>
+            <div className="sum bad">끊김 {count('cut') + count('gap')}</div>
+            <div className="sum warn">담당자 정지 {count('stopped')}</div>
           </div>
           <table className="list">
             <thead>

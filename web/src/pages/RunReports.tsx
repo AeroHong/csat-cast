@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { OUTCOME_LABEL, recurring, summarize, type Outcome, type RunReport } from '../core/runReports';
 import { kstDate, kstTime } from '../core/scheduler';
 
-const PROBLEM: Outcome[] = ['late', 'manual', 'skipped', 'failed', 'missed'];
+const PROBLEM: Outcome[] = ['late', 'manual', 'cut', 'gap', 'skipped', 'failed', 'missed'];
 
 const drift = (ms: number | null) => (ms === null ? '' : `${ms >= 0 ? '+' : ''}${(ms / 1000).toFixed(ms < 10_000 && ms > -10_000 ? 2 : 0)}초`);
 
@@ -103,7 +103,10 @@ export default function RunReports({
                             <tr key={c.id} className={PROBLEM.includes(c.outcome) ? 'st-failed' : c.outcome === 'pending' ? '' : 'st-done'}>
                               <td className="mono">{c.time.slice(0, 5)}</td>
                               <td>{c.label}</td>
-                              <td>{OUTCOME_LABEL[c.outcome]}</td>
+                              <td>
+                                {OUTCOME_LABEL[c.outcome]}
+                                {c.detail && <div className="muted small">{c.detail}</div>}
+                              </td>
                               <td className="mono">{drift(c.driftMs)}</td>
                             </tr>
                           ))}

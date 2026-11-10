@@ -11,6 +11,8 @@ export const CELL_LABEL: Record<CellKind, string> = {
   playing: '송출 중',
   played: '송출 완료',
   manual: '수동 송출',
+  cut: '끊김 (끝까지 안 나감·재생 중 소리 멈춤)',
+  userCut: '담당자가 재생 정지',
   skipped: '건너뜀',
   failed: '재생 실패',
   missing: '송출 보고 없음',
@@ -24,6 +26,8 @@ const CELL_MARK: Record<CellKind, string> = {
   playing: '▶',
   played: '✓',
   manual: '✋',
+  cut: '⚡',
+  userCut: '■',
   skipped: '↷',
   failed: '✕',
   missing: '?',
@@ -35,6 +39,7 @@ export function cellTitle(name: string, cell: Cell, entry?: TimelineEntry, cue?:
   const lines = [`${name} — ${what}`, CELL_LABEL[cell.kind]];
   if (cell.at) lines.push(`예정 ${kstTime(cell.at)}`);
   if (entry?.t) lines.push(`실제 시작 ${kstTime(entry.t)} (${formatDrift(cell.driftMs)})`);
+  if (entry?.d) lines.push(entry.d);
   return lines.join('\n');
 }
 
@@ -167,7 +172,7 @@ export default function LiveBoard({ rows, now }: { rows: ChannelRow[]; now: numb
 }
 
 export function CellLegend() {
-  const kinds: CellKind[] = ['played', 'manual', 'playing', 'soon', 'pending', 'skipped', 'failed', 'missing', 'offline', 'idle'];
+  const kinds: CellKind[] = ['played', 'manual', 'playing', 'soon', 'pending', 'cut', 'userCut', 'skipped', 'failed', 'missing', 'offline', 'idle'];
   return (
     <div className="legend">
       {kinds.map((k) => (

@@ -79,3 +79,34 @@ describe('summarize · recurring', () => {
     ]);
   });
 });
+
+describe('outcomesFrom — 끝까지 나갔는지', () => {
+  const issue = (kind: 'cut' | 'gap' | 'stopped') => ({ kind, playedMs: 1000, durationMs: 3000, gapMs: 0, detail: `${kind} 사유` });
+
+  it('완료여도 끊김 판정이 있으면 정상이 아니다 (수동 송출보다 우선)', () => {
+    const r = outcomesFrom(
+      {
+        plan,
+        states: { a: 'done', b: 'done', c: 'done', d: 'done' },
+        startedAt: { a: 0, b: 10_000, c: 20_000, d: 30_000 },
+        manual: ['d'],
+        issues: { a: issue('cut'), b: issue('gap'), d: issue('stopped') },
+      },
+      false,
+    );
+    expect(r.slice(0, 4).map((x) => x.outcome)).toEqual(['cut', 'gap', 'played', 'userCut']);
+    expect(r[0].detail).toBe('cut 사유');
+  });
+
+  it('회차가 끝났는데 재생 중으로 남은 방송은 정상이 아니라 중간 끊김', () => {
+    const snap = { plan, states: { a: 'playing' as const }, startedAt: { a: 0 }, manual: [] };
+    expect(outcomesFrom(snap, false)[0].outcome).toBe('pending');
+    expect(outcomesFrom(snap, true)[0].outcome).toBe('cut');
+  });
+
+  it('중간 끊김·끊김 있음은 문제로 세고, 담당자 정지는 세지 않는다', () => {
+    const base = { id: '1', mode: 'test' as const, label: '', startedAt: 0, endedAt: 1, incidents: [] };
+    const c = (outcome: 'cut' | 'gap' | 'userCut') => ({ id: outcome, time: '08:00:00', label: outcome, outcome, driftMs: 0 });
+    expect(summarize({ ...base, cues: [c('cut'), c('gap'), c('userCut')] }).problems).toBe(2);
+  });
+});
