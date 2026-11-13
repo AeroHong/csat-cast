@@ -211,7 +211,8 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
     let nextAssets = [...assets.filter((a) => !ids.has(a.id)), ...items.map((x) => x.asset)];
     setDocs((ds) => [...ds.filter(([id]) => !ids.has(id)), ...items.map((x): [string, SchoolAssetDoc] => [x.asset.id, x.doc])]);
     setComposing(null);
-    setSelected(new Set());
+    // 원본을 남겼으면 새 음원을 골라 둔다 → 바로 [시간표에 적용]
+    setSelected(removeOriginals ? new Set() : ids);
     const msgs: string[] = [];
     if (items.length === 1) msgs.push(`"${items[0].doc.label}" 음원을 만들어 저장했습니다 (${formatDuration(items[0].doc.durationMs / 1000)}).`);
     else if (items.length) msgs.push(`타종을 붙인 음원 ${items.length}개를 저장했습니다: ${items.map((x) => x.doc.label).join(', ')}.`);
@@ -232,12 +233,56 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
       if (swappedInDraft) msgs.push('시간표에서 원본을 쓰던 자리는 새 음원으로 바꿨습니다.');
       if (later.length) msgs.push(`원본 ${later.length}개는 지금 방송하는 시간표에서 쓰고 있어, 아래 시간표를 [저장]하면 삭제됩니다.`);
       if (kept) msgs.push(`원본 ${kept}개는 다른 채널 시간표에서 쓰고 있어 남겨 두었습니다.`);
-    } else if (items.length) msgs.push('시간표에서 고를 수 있습니다.');
+    } else if (items.length) msgs.push('새 음원을 골라 두었습니다. [📋 시간표에 적용]을 누르면 원래 음원 자리에 연결됩니다.');
     onAssets(nextAssets);
     setNotice(msgs.join(' ') || null);
     if (failed.length) setError(`저장하지 못한 음원 ${failed.length}개: ${failed.join(' / ')}`);
   }
   
+
+  /**
+   * 고른 음원을 편집 중인 시간표에 일괄 연결 (저장은 담당자가 [저장]으로).
+   * 1) 「원래 이름 (타종)」이면 원래 음원을 쓰던 줄을 이 음원으로 바꾼다
+   * 2) 아니면 이름·파일 이름 앞의 시각(16:20 …, 1620_…)과 같은 시각 줄에 연결한다 (초까지 같은 줄, 없으면 같은 분의 줄이 하나일 때)
+   */
+  function applyToTimetable(ids: string[]) {
+    if (!draft) return setError('먼저 아래에서 학교 시간표를 만드세요 (평가원 시간표 복사 등).');
+    let next = draft;
+    const done: string[] = [];
+    const missed: string[] = [];
+    for (const id of ids) {
+      const d = docs.find(([x]) => x === id)?.[1];
+      if (!d) continue;
+      const base = /^(.*) \(타종\)$/.exec(d.label)?.[1];
+      const origins = base ? docs.filter(([x, o]) => x !== id && o.label === base).map(([x]) => x) : [];
+      let rows = origins.length ? next.filter((c) => origins.includes(c.assetId)) : [];
+      if (!rows.length) {
+        const time = timeFromFileName(d.label) ?? timeFromFileName(d.fileName);
+        if (time) {
+          rows = next.filter((c) => c.time === time);
+          if (!rows.length) {
+            const sameMinute = next.filter((c) => c.time.slice(0, 5) === time.slice(0, 5));
+            if (sameMinute.length === 1) rows = sameMinute;
+          }
+        }
+      }
+      if (!rows.length) {
+        missed.push(d.label);
+        continue;
+      }
+      const hit = new Set(rows.map((c) => c.id));
+      next = next.map((c) => (hit.has(c.id) ? { ...c, assetId: id } : c));
+      done.push(`${d.label} → ${rows.map((c) => c.time.slice(0, 5)).join(', ')}`);
+    }
+    setDraft(next);
+    setSelected(new Set());
+    setError(
+      missed.length
+        ? `맞는 줄을 찾지 못한 음원 ${missed.length}개: ${missed.join(', ')}. 이름 앞에 시각(예: 16:20 준비령)을 넣거나, 시간표의 음원 칸에서 직접 고르세요.`
+        : null,
+    );
+    setNotice(done.length ? `음원 ${done.length}개를 시간표에 연결했습니다 (${done.join(' / ')}). 아래 [저장]해야 방송에 반영됩니다.` : null);
+  }
 
   const revert = () => {
     if (!window.confirm('학교 시간표를 지우고 평가원 시간표로 되돌릴까요? 만든 시간표는 복구할 수 없습니다 (올린 음원은 남습니다).'))
@@ -415,6 +460,15 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
                 ? '🔔 선택한 음원에 타종 붙이기'
                 : '🔔 타종 붙여 새 음원 만들기'}
           </button>
+          {selectedCount > 0 && (
+            <button
+              onClick={() => applyToTimetable(docs.map(([id]) => id).filter((id) => selected.has(id)))}
+              disabled={disabled || composing !== null}
+              title="「원래 이름 (타종)」 음원은 원래 음원 자리에, 이름 앞에 시각이 있으면 같은 시각 줄에 연결합니다"
+            >
+              📋 선택한 {selectedCount}개 시간표에 적용
+            </button>
+          )}
         </div>
         {composing && !locked && (
           <AudioComposer
