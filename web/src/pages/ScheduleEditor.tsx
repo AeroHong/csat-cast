@@ -79,6 +79,8 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
   const [composing, setComposing] = useState<string[] | null>(null);
   /** 타종 붙인 뒤 지울 원본 중, 저장된 시간표에서 아직 써서 [저장] 뒤에 지울 음원 */
   const pendingDelete = useRef(new Set<string>());
+  /** 학교 음원 목록 접기 (음원이 많으면 아래 시간표 칸이 좁아지므로) */
+  const [assetsFolded, setAssetsFolded] = useState(false);
   /** 학교 음원 목록에서 고른 음원 (타종 붙이기 대상) */
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const toggleSelect = (id: string) =>
@@ -419,7 +421,16 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
   return (
     <>
       <section className="card">
-        <h2>학교 음원</h2>
+        <div className="asset-head">
+          <h2>
+            학교 음원 {docs.length > 0 && <span className="muted small">{docs.length}개{selectedCount ? ` · ${selectedCount}개 선택` : ''}</span>}
+          </h2>
+          {docs.length > 0 && (
+            <button className="link" onClick={() => setAssetsFolded((f) => !f)}>
+              {assetsFolded ? '목록 펴기 ▼' : '목록 접기 ▲'}
+            </button>
+          )}
+        </div>
         <p className="muted small">
           직접 녹음·제작한 안내 방송을 올립니다 (mp3·wav, 20MB 이하, 여러 개 한 번에 가능). 파일 이름 앞에 시각을 붙이면(예:{' '}
           <span className="mono">1710_한국사종료5분전.mp3</span>) 시간표의 같은 시각 줄에 자동으로 연결되고, 같은 시각 파일을 다시
@@ -480,7 +491,8 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
             onSaved={(items, failed, removeOriginals) => void afterCompose(items, failed, removeOriginals)}
           />
         )}
-        {docs.length > 0 && (
+        {docs.length > 0 && !assetsFolded && (
+          <div className="asset-scroll">
           <table className="asset-list">
             <thead>
               <tr>
@@ -538,6 +550,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
                 ))}
             </tbody>
           </table>
+          </div>
         )}
       </section>
 

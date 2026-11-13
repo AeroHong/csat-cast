@@ -232,7 +232,13 @@ label.inline select { padding: 4px 6px; }
 .composer-name { min-width: 220px; }
 .composer-targets { margin: 4px 0 8px; padding-left: 20px; columns: 2; }
 .asset-list th.pick, .asset-list td.pick { width: 28px; text-align: center; }
-.asset-list th { text-align: left; font-weight: normal; padding: 6px 8px; }
+.asset-list th { text-align: left; font-weight: normal; padding: 6px 8px; position: sticky; top: 0; z-index: 1; background: var(--panel); box-shadow: 0 1px 0 var(--line); }
+.asset-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.asset-head .small { font-weight: 400; margin-left: 6px; }
+/* 음원이 수십 개여도 아래 시간표 칸을 밀어내지 않게 목록만 따로 스크롤 */
+.asset-scroll { max-height: 30vh; overflow-y: auto; margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.asset-scroll .asset-list { margin-top: 0; }
+.asset-scroll .asset-list tr:first-child td { border-top: 0; }
 .asset-list tr.pickable { cursor: pointer; }
 .asset-list tr.selected td { background: rgba(79, 124, 240, 0.12); }
 
@@ -249,7 +255,7 @@ label.inline select { padding: 4px 6px; }
   .col-side { min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 4px; }
   .col-main { min-height: 0; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; }
   /* 시간표 편집처럼 위에 카드가 더 있어도 표가 0줄로 줄어들지 않게 */
-  .timetable-card .table-scroll { min-height: 220px; }
+  .timetable-card .table-scroll { min-height: max(220px, 50vh); }
   .timetable-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .table-scroll { flex: 1; min-height: 0; overflow: auto; }
   .timeline thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); box-shadow: 0 1px 0 var(--line); }
