@@ -10,9 +10,19 @@ interface Props {
   assets: Asset[];
   /** 학교 음원 목록에서 고른 음원 id. 여러 개면 같은 타종 구성을 각각에 붙여 일괄 저장한다 */
   targets?: string[];
-  /** 저장한 음원들과 실패한 항목 (일괄 저장에서 일부만 실패할 수 있다) */
-  onSaved: (saved: { asset: Asset; doc: SchoolAssetDoc }[], failed: string[]) => void;
+  /**
+   * 저장한 음원들과 실패한 항목 (일괄 저장에서 일부만 실패할 수 있다).
+   * removeOriginals: 담당자가 '저장 후 원본 삭제'를 골랐는지 (원본은 Saved.from)
+   */
+  onSaved: (saved: Saved[], failed: string[], removeOriginals: boolean) => void;
   onClose: () => void;
+}
+
+export interface Saved {
+  asset: Asset;
+  doc: SchoolAssetDoc;
+  /** 타종을 붙인 원본 음원 id (목록에서 고른 음원) */
+  from?: string;
 }
 
 /** target: 학교 음원 목록에서 고른 음원 자리 (일괄 만들기에서는 고른 음원마다 바뀐다) */
@@ -53,6 +63,8 @@ export default function AudioComposer({ neisCode, assets, targets: targetIds = [
   /** 일괄 만들기에서 미리 듣기할 음원 */
   const [previewIdx, setPreviewIdx] = useState(0);
   const [progress, setProgress] = useState<string | null>(null);
+  /** 저장한 뒤 원본(고른 음원) 삭제 */
+  const [removeOriginals, setRemoveOriginals] = useState(true);
   const [trim, setTrim] = useState(true);
   const [normalize, setNormalize] = useState(true);
   const [name, setName] = useState('');
@@ -196,17 +208,18 @@ export default function AudioComposer({ neisCode, assets, targets: targetIds = [
     stop();
     try {
       if (!many) {
-        onSaved([await upload(result.buffer, name.trim() || '타종 + 멘트')], []);
+        const from = usesTarget ? targets[0] : undefined;
+        onSaved([{ ...(await upload(result.buffer, name.trim() || '타종 + 멘트')), from }], [], removeOriginals && !!from);
         return;
       }
       // 일괄: 고른 음원마다 같은 구성으로 만들어 하나씩 저장한다
-      const saved: { asset: Asset; doc: SchoolAssetDoc }[] = [];
+      const saved: Saved[] = [];
       const failed: string[] = [];
       for (const [i, t] of targets.entries()) {
         setProgress(`${i + 1}/${targets.length}`);
         try {
           const r = i === previewIdx ? result : await render(t);
-          saved.push(await upload(r.buffer, autoName(t)));
+          saved.push({ ...(await upload(r.buffer, autoName(t))), from: t });
         } catch (e) {
           failed.push(`${assetLabel(t)}: ${e instanceof Error ? e.message : String(e)}`);
         } finally {
@@ -214,7 +227,7 @@ export default function AudioComposer({ neisCode, assets, targets: targetIds = [
           decoded.current.delete(t);
         }
       }
-      onSaved(saved, failed);
+      onSaved(saved, failed, removeOriginals);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -377,6 +390,11 @@ export default function AudioComposer({ neisCode, assets, targets: targetIds = [
               <span className="muted small">각각 「원래 이름 (타종)」으로 저장됩니다</span>
             ) : (
               <input type="text" className="composer-name" placeholder="음원 이름" value={name} disabled={disabled} onChange={(e) => setName(e.target.value)} />
+            )}
+            {usesTarget && (
+              <label className="inline" title="시간표에서 원본을 쓰던 자리는 새 음원으로 바꿉니다">
+                <input type="checkbox" checked={removeOriginals} disabled={disabled} onChange={(e) => setRemoveOriginals(e.target.checked)} /> 저장 후 원본 삭제
+              </label>
             )}
             <button className="primary" onClick={() => void save()} disabled={disabled}>
               {busy === 'save' ? `저장 중… ${progress ?? ''}` : many ? `${targets.length}개 모두 만들어 저장` : '학교 음원으로 저장'}

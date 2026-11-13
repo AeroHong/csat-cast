@@ -11,7 +11,7 @@ import {
 } from '../core/schoolSchedule';
 import { assignByFileName, looksLikeSchedule, parseScheduleRows, timeFromFileName } from '../core/scheduleImport';
 import type { Asset, ChannelConfig, Cue, SchoolProfile, Template } from '../core/types';
-import AudioComposer from './AudioComposer';
+import AudioComposer, { type Saved } from './AudioComposer';
 import { formatDuration } from './NowPlaying';
 
 interface Props {
@@ -77,6 +77,8 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
   const [previewId, setPreviewId] = useState<string | null>(null);
   /** 타종 붙여 새 음원 만들기 열림 (값: 목록에서 고른 음원 id들) */
   const [composing, setComposing] = useState<string[] | null>(null);
+  /** 타종 붙인 뒤 지울 원본 중, 저장된 시간표에서 아직 써서 [저장] 뒤에 지울 음원 */
+  const pendingDelete = useRef(new Set<string>());
   /** 학교 음원 목록에서 고른 음원 (타종 붙이기 대상) */
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const toggleSelect = (id: string) =>
@@ -175,8 +177,67 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
       if (check?.warnings.length && !window.confirm(`확인이 필요합니다:\n\n${check.warnings.join('\n')}\n\n이대로 저장할까요?`)) return;
       const cues = [...draft].sort((a, b) => a.time.localeCompare(b.time)).map((c) => ({ ...c, official: false }));
       onProfile(await saveChannel(profile, channel.id, { customCues: cues }));
-      setNotice('저장했습니다. 이제 이 시간표로 방송합니다.');
+      // 타종 붙인 새 음원으로 바꿔 둔 원본은 저장된 시간표에서 빠졌으니 이제 지운다
+      const ready = [...pendingDelete.current].filter((id) => !cues.some((c) => c.assetId === id) && !usedByOtherChannel(id));
+      pendingDelete.current.clear();
+      const removed = await deleteOriginals(ready);
+      if (removed.length) onAssets(assets.filter((a) => !removed.includes(a.id)));
+      setNotice(`저장했습니다. 이제 이 시간표로 방송합니다.${removed.length ? ` 바꿔 둔 원본 음원 ${removed.length}개도 삭제했습니다.` : ''}`);
     });
+
+  /** 다른 채널(연장 시험실 등) 시간표에서 쓰는 음원 */
+  const usedByOtherChannel = (id: string) => profile.channels.some((ch) => ch.id !== channel.id && ch.customCues?.some((c) => c.assetId === id));
+
+  /** 원본 음원 지우기 (목록에서도 뺀다). 지운 id를 돌려준다. 실패한 원본은 남겨 두어 담당자가 목록에서 지울 수 있다 */
+  async function deleteOriginals(ids: string[]): Promise<string[]> {
+    const done: string[] = [];
+    for (const id of ids) {
+      const d = docs.find(([x]) => x === id)?.[1];
+      if (!d) continue;
+      try {
+        await deleteSchoolAudio(neisCode, id, d);
+        done.push(id);
+      } catch {
+        /* 남겨 둔다 */
+      }
+    }
+    if (done.length) setDocs((ds) => ds.filter(([x]) => !done.includes(x)));
+    return done;
+  }
+
+  /** 타종 붙여 저장한 뒤: 원본 삭제를 골랐으면 시간표의 원본 자리를 새 음원으로 바꾸고 원본을 지운다 */
+  async function afterCompose(items: Saved[], failed: string[], removeOriginals: boolean) {
+    const ids = new Set(items.map((x) => x.asset.id));
+    let nextAssets = [...assets.filter((a) => !ids.has(a.id)), ...items.map((x) => x.asset)];
+    setDocs((ds) => [...ds.filter(([id]) => !ids.has(id)), ...items.map((x): [string, SchoolAssetDoc] => [x.asset.id, x.doc])]);
+    setComposing(null);
+    setSelected(new Set());
+    const msgs: string[] = [];
+    if (items.length === 1) msgs.push(`"${items[0].doc.label}" 음원을 만들어 저장했습니다 (${formatDuration(items[0].doc.durationMs / 1000)}).`);
+    else if (items.length) msgs.push(`타종을 붙인 음원 ${items.length}개를 저장했습니다: ${items.map((x) => x.doc.label).join(', ')}.`);
+    if (removeOriginals) {
+      const withFrom = items.filter((x) => x.from && x.from !== x.asset.id);
+      const swaps = withFrom.filter((x) => !usedByOtherChannel(x.from!));
+      const kept = withFrom.length - swaps.length;
+      // 편집 중인 시간표에서 원본을 쓰던 자리는 새 음원으로 바꾼다
+      const swapOf = new Map(swaps.map((x) => [x.from!, x.asset.id]));
+      const swappedInDraft = (draft ?? []).some((c) => swapOf.has(c.assetId));
+      if (swappedInDraft) setDraft((d) => d && d.map((c) => (swapOf.has(c.assetId) ? { ...c, assetId: swapOf.get(c.assetId)! } : c)));
+      // 저장된 시간표에서 쓰는 원본은 시간표 [저장] 뒤에 지우고, 나머지는 바로 지운다
+      const later = swaps.map((x) => x.from!).filter((id) => (saved ?? []).some((c) => c.assetId === id));
+      later.forEach((id) => pendingDelete.current.add(id));
+      const removed = await deleteOriginals(swaps.map((x) => x.from!).filter((id) => !later.includes(id)));
+      nextAssets = nextAssets.filter((a) => !removed.includes(a.id));
+      if (removed.length) msgs.push(`원본 ${removed.length}개를 삭제했습니다.`);
+      if (swappedInDraft) msgs.push('시간표에서 원본을 쓰던 자리는 새 음원으로 바꿨습니다.');
+      if (later.length) msgs.push(`원본 ${later.length}개는 지금 방송하는 시간표에서 쓰고 있어, 아래 시간표를 [저장]하면 삭제됩니다.`);
+      if (kept) msgs.push(`원본 ${kept}개는 다른 채널 시간표에서 쓰고 있어 남겨 두었습니다.`);
+    } else if (items.length) msgs.push('시간표에서 고를 수 있습니다.');
+    onAssets(nextAssets);
+    setNotice(msgs.join(' ') || null);
+    if (failed.length) setError(`저장하지 못한 음원 ${failed.length}개: ${failed.join(' / ')}`);
+  }
+  
 
   const revert = () => {
     if (!window.confirm('학교 시간표를 지우고 평가원 시간표로 되돌릴까요? 만든 시간표는 복구할 수 없습니다 (올린 음원은 남습니다).'))
@@ -362,21 +423,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
             assets={assets}
             targets={composing}
             onClose={() => setComposing(null)}
-            onSaved={(saved, failed) => {
-              const ids = new Set(saved.map((x) => x.asset.id));
-              setDocs((ds) => [...ds.filter(([id]) => !ids.has(id)), ...saved.map((x): [string, SchoolAssetDoc] => [x.asset.id, x.doc])]);
-              onAssets([...assets.filter((a) => !ids.has(a.id)), ...saved.map((x) => x.asset)]);
-              setComposing(null);
-              setSelected(new Set());
-              setNotice(
-                saved.length === 1
-                  ? `"${saved[0].doc.label}" 음원을 만들어 저장했습니다 (${formatDuration(saved[0].doc.durationMs / 1000)}). 시간표에서 고를 수 있습니다.`
-                  : saved.length
-                    ? `타종을 붙인 음원 ${saved.length}개를 저장했습니다: ${saved.map((x) => x.doc.label).join(', ')}. 시간표에서 고를 수 있습니다.`
-                    : null,
-              );
-              if (failed.length) setError(`저장하지 못한 음원 ${failed.length}개: ${failed.join(' / ')}`);
-            }}
+            onSaved={(items, failed, removeOriginals) => void afterCompose(items, failed, removeOriginals)}
           />
         )}
         {docs.length > 0 && (
