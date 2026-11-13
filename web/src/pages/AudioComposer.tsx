@@ -8,11 +8,16 @@ import { formatDuration } from './NowPlaying';
 interface Props {
   neisCode: string;
   assets: Asset[];
-  onSaved: (asset: Asset, doc: SchoolAssetDoc) => void;
+  /** 학교 음원 목록에서 고른 음원 id. 여러 개면 같은 타종 구성을 각각에 붙여 일괄 저장한다 */
+  targets?: string[];
+  /** 저장한 음원들과 실패한 항목 (일괄 저장에서 일부만 실패할 수 있다) */
+  onSaved: (saved: { asset: Asset; doc: SchoolAssetDoc }[], failed: string[]) => void;
   onClose: () => void;
 }
 
-type Source = { type: 'asset'; id: string } | { type: 'file'; file: File };
+/** target: 학교 음원 목록에서 고른 음원 자리 (일괄 만들기에서는 고른 음원마다 바뀐다) */
+type Source = { type: 'asset'; id: string } | { type: 'file'; file: File } | { type: 'target' };
+type RealSource = Exclude<Source, { type: 'target' }>;
 interface Block {
   key: number;
   source: Source | null;
@@ -36,10 +41,18 @@ const block = (source: Source | null): Block => ({ key: ++seq, source, gapAfterS
  * 타종 + 멘트 이어 붙이기. 블록을 순서대로 놓고 간격만 정하면, 앞뒤 무음을 자르고 음량을 맞춰 한 파일로 만든다.
  * 결과는 학교 음원으로 저장되어 시간표에서 고를 수 있다.
  */
-export default function AudioComposer({ neisCode, assets, onSaved, onClose }: Props) {
+export default function AudioComposer({ neisCode, assets, targets: targetIds = [], onSaved, onClose }: Props) {
   const bells = assets.filter((a) => a.id.startsWith('ref-bell-'));
   const school = assets.filter((a) => a.source !== 'builtin');
-  const [blocks, setBlocks] = useState<Block[]>(() => [block(bells.some((b) => b.id === DEFAULT_BELL) ? { type: 'asset', id: DEFAULT_BELL } : null), block(null)]);
+  const [targets] = useState(() => targetIds.filter((id) => assets.some((a) => a.id === id)));
+  const batch = targets.length > 1;
+  const [blocks, setBlocks] = useState<Block[]>(() => [
+    block(bells.some((b) => b.id === DEFAULT_BELL) ? { type: 'asset', id: DEFAULT_BELL } : null),
+    block(targets.length ? { type: 'target' } : null),
+  ]);
+  /** 일괄 만들기에서 미리 듣기할 음원 */
+  const [previewIdx, setPreviewIdx] = useState(0);
+  const [progress, setProgress] = useState<string | null>(null);
   const [trim, setTrim] = useState(true);
   const [normalize, setNormalize] = useState(true);
   const [name, setName] = useState('');
@@ -58,7 +71,7 @@ export default function AudioComposer({ neisCode, assets, onSaved, onClose }: Pr
   useEffect(() => {
     stop();
     setResult(null);
-  }, [blocks, trim, normalize]);
+  }, [blocks, trim, normalize, previewIdx]);
 
   // 닫을 때 미리 듣기 정리
   useEffect(
@@ -87,13 +100,32 @@ export default function AudioComposer({ neisCode, assets, onSaved, onClose }: Pr
       return next;
     });
 
-  function sourceLabel(s: Source | null) {
+  const assetLabel = (id: string) => assets.find((a) => a.id === id)?.label ?? '(없는 음원)';
+  const usesTarget = blocks.some((b) => b.source?.type === 'target');
+  /** 일괄로 여러 개를 만드는지 (고른 음원이 여러 개이고 그 자리가 블록에 있을 때) */
+  const many = batch && usesTarget;
+
+  function sourceLabel(s: Source | null, target?: string) {
     if (!s) return '';
     if (s.type === 'file') return s.file.name;
-    return assets.find((a) => a.id === s.id)?.label ?? '(없는 음원)';
+    if (s.type === 'target') return target ? assetLabel(target) : '선택한 음원';
+    return assetLabel(s.id);
   }
 
-  async function decode(s: Source): Promise<AudioBuffer> {
+  /** 고른 음원 자리를 실제 음원으로 바꾼다 */
+  function resolve(s: Source, target: string | undefined): RealSource {
+    if (s.type !== 'target') return s;
+    if (!target) throw new Error('선택한 음원이 없습니다');
+    return { type: 'asset', id: target };
+  }
+
+  /** 이름: 고른 음원 자리가 있으면 「원래 이름 (타종)」, 없으면 블록 이름을 이어 붙인다 */
+  const autoName = (target: string | undefined) =>
+    usesTarget && target
+      ? `${assetLabel(target)} (타종)`
+      : blocks.map((b) => sourceLabel(b.source, target).replace(/^타종: /, '').replace(/\.[^.]+$/, '')).join(' + ');
+
+  async function decode(s: RealSource): Promise<AudioBuffer> {
     const key = s.type === 'file' ? s.file : s.id;
     const hit = decoded.current.get(key);
     if (hit) return hit;
@@ -109,24 +141,30 @@ export default function AudioComposer({ neisCode, assets, onSaved, onClose }: Pr
     }
   }
 
+  /** 블록대로 이어 붙인 결과 (target: 고른 음원 자리에 넣을 음원) */
+  async function render(target: string | undefined): Promise<Result> {
+    if (blocks.some((b) => !b.source)) throw new Error('모든 블록에 음원을 고르세요');
+    const bufs = await Promise.all(blocks.map((b) => decode(resolve(b.source!, target))));
+    const mix: MixBlock[] = bufs.map((buf, i) => {
+      const mono = mixdown(buf);
+      const { start, end } = trim ? findSoundBounds(mono, buf.sampleRate) : { start: 0, end: mono.length };
+      const auto = normalize ? clipGain(mono.subarray(start, end)) : 1;
+      return { startSec: start / buf.sampleRate, endSec: end / buf.sampleRate, gain: (auto * blocks[i].volume) / 100, gapAfterSec: blocks[i].gapAfterSec };
+    });
+    const { placements, totalSec } = planMix(mix);
+    if (44 + Math.ceil(totalSec * MIX_SAMPLE_RATE) * 2 > MAX_UPLOAD_BYTES)
+      throw new Error(`합친 결과가 ${MAX_UPLOAD_BYTES / 1024 / 1024}MB를 넘습니다 (약 5분 이하로 줄이세요)`);
+    const buffer = await renderMix(bufs, placements, totalSec);
+    return { buffer, peaks: computePeaks(buffer, 800), spans: placements.map((p) => [p.atSec, p.atSec + p.durationSec]), totalSec };
+  }
+
   async function make() {
     setBusy('make');
     setError(null);
     try {
-      if (blocks.some((b) => !b.source)) throw new Error('모든 블록에 음원을 고르세요');
-      const bufs = await Promise.all(blocks.map((b) => decode(b.source!)));
-      const mix: MixBlock[] = bufs.map((buf, i) => {
-        const mono = mixdown(buf);
-        const { start, end } = trim ? findSoundBounds(mono, buf.sampleRate) : { start: 0, end: mono.length };
-        const auto = normalize ? clipGain(mono.subarray(start, end)) : 1;
-        return { startSec: start / buf.sampleRate, endSec: end / buf.sampleRate, gain: (auto * blocks[i].volume) / 100, gapAfterSec: blocks[i].gapAfterSec };
-      });
-      const { placements, totalSec } = planMix(mix);
-      if (44 + Math.ceil(totalSec * MIX_SAMPLE_RATE) * 2 > MAX_UPLOAD_BYTES)
-        throw new Error(`합친 결과가 ${MAX_UPLOAD_BYTES / 1024 / 1024}MB를 넘습니다 (약 5분 이하로 줄이세요)`);
-      const buffer = await renderMix(bufs, placements, totalSec);
-      setResult({ buffer, peaks: computePeaks(buffer, 800), spans: placements.map((p) => [p.atSec, p.atSec + p.durationSec]), totalSec });
-      if (!name) setName(blocks.map((b) => sourceLabel(b.source).replace(/^타종: /, '').replace(/\.[^.]+$/, '')).join(' + '));
+      const target = targets[many ? previewIdx : 0];
+      setResult(await render(target));
+      if (!name && !many) setName(autoName(target));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -148,19 +186,39 @@ export default function AudioComposer({ neisCode, assets, onSaved, onClose }: Pr
     setPlaying(true);
   }
 
+  const upload = (buffer: AudioBuffer, label: string) =>
+    uploadSchoolAudio(neisCode, new File([encodeWav(buffer.getChannelData(0), MIX_SAMPLE_RATE)], `${label}.wav`, { type: 'audio/wav' }), label);
+
   async function save() {
     if (!result) return;
     setBusy('save');
     setError(null);
+    stop();
     try {
-      stop();
-      const label = name.trim() || '타종 + 멘트';
-      const wav = encodeWav(result.buffer.getChannelData(0), MIX_SAMPLE_RATE);
-      const { asset, doc } = await uploadSchoolAudio(neisCode, new File([wav], `${label}.wav`, { type: 'audio/wav' }), label);
-      onSaved(asset, doc);
+      if (!many) {
+        onSaved([await upload(result.buffer, name.trim() || '타종 + 멘트')], []);
+        return;
+      }
+      // 일괄: 고른 음원마다 같은 구성으로 만들어 하나씩 저장한다
+      const saved: { asset: Asset; doc: SchoolAssetDoc }[] = [];
+      const failed: string[] = [];
+      for (const [i, t] of targets.entries()) {
+        setProgress(`${i + 1}/${targets.length}`);
+        try {
+          const r = i === previewIdx ? result : await render(t);
+          saved.push(await upload(r.buffer, autoName(t)));
+        } catch (e) {
+          failed.push(`${assetLabel(t)}: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+          // 고른 원본은 한 번씩만 쓰므로 디코딩 결과를 바로 내려 메모리를 아낀다
+          decoded.current.delete(t);
+        }
+      }
+      onSaved(saved, failed);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
+      setProgress(null);
       setBusy(null);
     }
   }
@@ -170,31 +228,43 @@ export default function AudioComposer({ neisCode, assets, onSaved, onClose }: Pr
   return (
     <div className="composer">
       <div className="composer-head">
-        <strong>타종 붙여 새 음원 만들기</strong>
+        <strong>{batch ? `선택한 음원 ${targets.length}개에 타종 붙이기` : '타종 붙여 새 음원 만들기'}</strong>
         <button className="link" onClick={onClose}>
           닫기
         </button>
       </div>
       <p className="muted small">
         클로바더빙 등으로 만든 멘트 파일 앞뒤에 타종을 붙입니다. 순서대로 이어 붙이고, 블록 사이 간격만 정하면 됩니다.
+        {batch && ' 📌 자리에 선택한 음원이 하나씩 들어가, 같은 구성으로 각각 새 음원이 만들어집니다 (원본은 그대로 남습니다).'}
       </p>
+      {batch && (
+        <ul className="composer-targets small">
+          {targets.map((t) => (
+            <li key={t}>{assetLabel(t)}</li>
+          ))}
+        </ul>
+      )}
 
       <ol className="composer-blocks">
         {blocks.map((b, i) => (
           <li key={b.key}>
             <span className="composer-no">{i + 1}</span>
             <select
-              value={b.source?.type === 'asset' ? b.source.id : b.source ? '__file' : ''}
+              value={b.source?.type === 'asset' ? b.source.id : b.source?.type === 'target' ? '__target' : b.source ? '__file' : ''}
               disabled={disabled}
               onChange={(e) => {
                 const v = e.target.value;
                 if (v === '__pick') {
                   fileFor.current = b.key;
                   fileInput.current?.click();
-                } else patch(b.key, { source: v ? { type: 'asset', id: v } : null });
+                } else if (v === '__target') patch(b.key, { source: { type: 'target' } });
+                else patch(b.key, { source: v ? { type: 'asset', id: v } : null });
               }}
             >
               <option value="">— 음원 선택 —</option>
+              {targets.length > 0 && (
+                <option value="__target">📌 {batch ? `선택한 음원 ${targets.length}개 (각각)` : `선택한 음원: ${assetLabel(targets[0])}`}</option>
+              )}
               {b.source?.type === 'file' && <option value="__file">📁 {b.source.file.name}</option>}
               <option value="__pick">📁 내 PC 파일 고르기…</option>
               <optgroup label="타종 (평가원 참고 타종)">
@@ -275,6 +345,18 @@ export default function AudioComposer({ neisCode, assets, onSaved, onClose }: Pr
           <input type="checkbox" checked={normalize} disabled={disabled} onChange={(e) => setNormalize(e.target.checked)} /> 음량 자동 맞추기
         </label>
         <span className="spacer" />
+        {many && (
+          <label className="inline">
+            미리 들을 음원
+            <select value={previewIdx} disabled={disabled} onChange={(e) => setPreviewIdx(Number(e.target.value))}>
+              {targets.map((t, i) => (
+                <option key={t} value={i}>
+                  {assetLabel(t)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <button className="primary" onClick={() => void make()} disabled={disabled}>
           {busy === 'make' ? '만드는 중…' : '미리 만들기'}
         </button>
@@ -291,9 +373,13 @@ export default function AudioComposer({ neisCode, assets, onSaved, onClose }: Pr
             </button>
             <span className="mono">전체 {formatDuration(result.totalSec)}</span>
             <span className="spacer" />
-            <input type="text" className="composer-name" placeholder="음원 이름" value={name} disabled={disabled} onChange={(e) => setName(e.target.value)} />
+            {many ? (
+              <span className="muted small">각각 「원래 이름 (타종)」으로 저장됩니다</span>
+            ) : (
+              <input type="text" className="composer-name" placeholder="음원 이름" value={name} disabled={disabled} onChange={(e) => setName(e.target.value)} />
+            )}
             <button className="primary" onClick={() => void save()} disabled={disabled}>
-              {busy === 'save' ? '저장 중…' : '학교 음원으로 저장'}
+              {busy === 'save' ? `저장 중… ${progress ?? ''}` : many ? `${targets.length}개 모두 만들어 저장` : '학교 음원으로 저장'}
             </button>
           </div>
         </div>

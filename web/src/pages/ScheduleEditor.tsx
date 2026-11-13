@@ -75,8 +75,16 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
   const firstChannelEffect = useRef(true);
   const [uploadLabel, setUploadLabel] = useState('');
   const [previewId, setPreviewId] = useState<string | null>(null);
-  /** 타종 붙여 새 음원 만들기 열림 */
-  const [composing, setComposing] = useState(false);
+  /** 타종 붙여 새 음원 만들기 열림 (값: 목록에서 고른 음원 id들) */
+  const [composing, setComposing] = useState<string[] | null>(null);
+  /** 학교 음원 목록에서 고른 음원 (타종 붙이기 대상) */
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toggleSelect = (id: string) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
 
   // 채널이 바뀌거나 저장된 시간표가 바뀌면 편집 내용을 다시 맞춘다 (처음 열 때는 initialDraft가 맞춰 둠)
   useEffect(() => {
@@ -299,6 +307,8 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
   }
 
   const disabled = locked || busy !== null;
+  /** 지금 목록에 있는 음원 중 고른 수 (삭제된 음원은 빼고 센다) */
+  const selectedCount = docs.filter(([id]) => selected.has(id)).length;
 
   return (
     <>
@@ -333,30 +343,78 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
               }}
             />
           </label>
-          <button onClick={() => setComposing(true)} disabled={disabled || composing}>
-            🔔 타종 붙여 새 음원 만들기
+          <button
+            onClick={() => setComposing(docs.map(([id]) => id).filter((id) => selected.has(id)))}
+            disabled={disabled || composing !== null}
+            title="목록에서 음원을 고르고 누르면 고른 음원에 타종을 붙입니다 (여러 개면 일괄)"
+          >
+            {selectedCount > 1
+              ? `🔔 선택한 ${selectedCount}개에 타종 일괄 붙이기`
+              : selectedCount === 1
+                ? '🔔 선택한 음원에 타종 붙이기'
+                : '🔔 타종 붙여 새 음원 만들기'}
           </button>
         </div>
         {composing && !locked && (
           <AudioComposer
+            key={composing.join(',')}
             neisCode={neisCode}
             assets={assets}
-            onClose={() => setComposing(false)}
-            onSaved={(asset, doc) => {
-              setDocs((ds) => [...ds.filter(([id]) => id !== asset.id), [asset.id, doc]]);
-              onAssets([...assets.filter((a) => a.id !== asset.id), asset]);
-              setComposing(false);
-              setNotice(`"${doc.label}" 음원을 만들어 저장했습니다 (${formatDuration(doc.durationMs / 1000)}). 시간표에서 고를 수 있습니다.`);
+            targets={composing}
+            onClose={() => setComposing(null)}
+            onSaved={(saved, failed) => {
+              const ids = new Set(saved.map((x) => x.asset.id));
+              setDocs((ds) => [...ds.filter(([id]) => !ids.has(id)), ...saved.map((x): [string, SchoolAssetDoc] => [x.asset.id, x.doc])]);
+              onAssets([...assets.filter((a) => !ids.has(a.id)), ...saved.map((x) => x.asset)]);
+              setComposing(null);
+              setSelected(new Set());
+              setNotice(
+                saved.length === 1
+                  ? `"${saved[0].doc.label}" 음원을 만들어 저장했습니다 (${formatDuration(saved[0].doc.durationMs / 1000)}). 시간표에서 고를 수 있습니다.`
+                  : saved.length
+                    ? `타종을 붙인 음원 ${saved.length}개를 저장했습니다: ${saved.map((x) => x.doc.label).join(', ')}. 시간표에서 고를 수 있습니다.`
+                    : null,
+              );
+              if (failed.length) setError(`저장하지 못한 음원 ${failed.length}개: ${failed.join(' / ')}`);
             }}
           />
         )}
         {docs.length > 0 && (
           <table className="asset-list">
+            <thead>
+              <tr>
+                <th className="pick">
+                  <input
+                    type="checkbox"
+                    title="모두 선택"
+                    checked={selectedCount === docs.length}
+                    ref={(el) => {
+                      if (el) el.indeterminate = selectedCount > 0 && selectedCount < docs.length;
+                    }}
+                    disabled={disabled || composing !== null}
+                    onChange={(e) => setSelected(e.target.checked ? new Set(docs.map(([id]) => id)) : new Set())}
+                  />
+                </th>
+                <th colSpan={4} className="muted small">
+                  {selectedCount ? `${selectedCount}개 선택 — 위 [🔔 타종 붙이기]를 누르세요` : '줄을 눌러 타종을 붙일 음원을 고르세요 (여러 개 가능)'}
+                </th>
+              </tr>
+            </thead>
             <tbody>
               {[...docs]
                 .sort((a, b) => a[1].label.localeCompare(b[1].label))
                 .map(([id, d]) => (
-                  <tr key={id}>
+                  <tr
+                    key={id}
+                    className={`pickable ${selected.has(id) ? 'selected' : ''}`}
+                    onClick={(e) => {
+                      if (disabled || composing !== null || (e.target as HTMLElement).closest('button, input')) return;
+                      toggleSelect(id);
+                    }}
+                  >
+                    <td className="pick">
+                      <input type="checkbox" checked={selected.has(id)} disabled={disabled || composing !== null} onChange={() => toggleSelect(id)} />
+                    </td>
                     <td>
                       <strong>{d.label}</strong>
                       <div className="muted small">{d.fileName}</div>
