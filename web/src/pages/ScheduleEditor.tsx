@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { audioEngine, fetchAssetBytes } from '../core/audio';
 import { mixdown, MIX_SAMPLE_RATE } from '../core/audioMix';
-import { downloadBlob, encodeMp3, nextDownload, safeFileName } from '../core/mp3';
+import { byLabel, downloadBlob, encodeMp3, nextDownload, safeFileName } from '../core/mp3';
 import { loadSchoolAssetDocs } from '../core/catalog';
 import {
   checkSchedule,
@@ -106,7 +106,9 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
     void loadSchoolAssetDocs(neisCode).then(setDocs);
   }, [neisCode]);
 
-  const schoolAssets = assets.filter((a) => a.source !== 'builtin');
+  const schoolAssets = assets.filter((a) => a.source !== 'builtin').sort(byLabel);
+  /** 학교 음원 목록 (화면에 보이는 이름순. 고른 음원도 이 순서로 처리한다) */
+  const sortedDocs = useMemo(() => [...docs].sort((a, b) => byLabel(a[1], b[1])), [docs]);
   const builtinAssets = assets.filter((a) => a.source === 'builtin');
   const assetIds = useMemo(() => new Set(assets.map((a) => a.id)), [assets]);
   const check = useMemo(() => (draft ? checkSchedule(draft, assetIds) : null), [draft, assetIds]);
@@ -493,7 +495,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
             />
           </label>
           <button
-            onClick={() => setComposing(docs.map(([id]) => id).filter((id) => selected.has(id)))}
+            onClick={() => setComposing(sortedDocs.map(([id]) => id).filter((id) => selected.has(id)))}
             disabled={disabled || composing !== null}
             title="목록에서 음원을 고르고 누르면 고른 음원에 타종을 붙입니다 (여러 개면 일괄)"
           >
@@ -505,7 +507,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
           </button>
           {selectedCount > 0 && (
             <button
-              onClick={() => applyToTimetable(docs.map(([id]) => id).filter((id) => selected.has(id)))}
+              onClick={() => applyToTimetable(sortedDocs.map(([id]) => id).filter((id) => selected.has(id)))}
               disabled={disabled || composing !== null}
               title="「원래 이름 (타종)」 음원은 원래 음원 자리에, 이름 앞에 시각이 있으면 같은 시각 줄에 연결합니다"
             >
@@ -514,7 +516,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
           )}
           {selectedCount > 0 && (
             <button
-              onClick={() => downloadSelected(docs.map(([id]) => id).filter((id) => selected.has(id)))}
+              onClick={() => downloadSelected(sortedDocs.map(([id]) => id).filter((id) => selected.has(id)))}
               disabled={busy !== null || composing !== null}
               title="학교 방송 프로그램에 넣을 MP3 파일로 내려받습니다. 이름의 「(타종)」은 빼고 받습니다."
             >
@@ -555,9 +557,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
               </tr>
             </thead>
             <tbody>
-              {[...docs]
-                .sort((a, b) => a[1].label.localeCompare(b[1].label))
-                .map(([id, d]) => (
+              {sortedDocs.map(([id, d]) => (
                   <tr
                     key={id}
                     className={`pickable ${selected.has(id) ? 'selected' : ''}`}

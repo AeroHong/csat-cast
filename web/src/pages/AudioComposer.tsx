@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { computePeaks, fetchAssetBytes } from '../core/audio';
 import { MIX_SAMPLE_RATE, clipGain, encodeWav, findSoundBounds, mixdown, planMix, renderMix, type MixBlock } from '../core/audioMix';
-import { downloadBlob, encodeMp3, nextDownload, safeFileName } from '../core/mp3';
+import { byLabel, downloadBlob, encodeMp3, nextDownload, safeFileName } from '../core/mp3';
 import { MAX_UPLOAD_BYTES, uploadSchoolAudio, type SchoolAssetDoc } from '../core/schoolSchedule';
 import type { Asset } from '../core/types';
 import { formatDuration } from './NowPlaying';
@@ -54,7 +54,7 @@ const block = (source: Source | null): Block => ({ key: ++seq, source, gapAfterS
  */
 export default function AudioComposer({ neisCode, assets, targets: targetIds = [], onSaved, onClose }: Props) {
   const bells = assets.filter((a) => a.id.startsWith('ref-bell-'));
-  const school = assets.filter((a) => a.source !== 'builtin');
+  const school = assets.filter((a) => a.source !== 'builtin').sort(byLabel);
   const [targets] = useState(() => targetIds.filter((id) => assets.some((a) => a.id === id)));
   const batch = targets.length > 1;
   const [blocks, setBlocks] = useState<Block[]>(() => [

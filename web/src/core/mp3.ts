@@ -48,3 +48,6 @@ export function downloadBlob(blob: Blob, fileName: string) {
 
 /** 여러 파일을 차례로 내려받을 때 브라우저가 막지 않도록 사이를 둔다 */
 export const nextDownload = () => new Promise((r) => setTimeout(r, 400));
+
+/** 음원 이름순 정렬 (한글, 숫자는 크기순: 0805_… < 1045_…) */
+export const byLabel = (a: { label: string }, b: { label: string }) => a.label.localeCompare(b.label, 'ko', { numeric: true });
