@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { computePeaks, fetchAssetBytes } from '../core/audio';
 import { MIX_SAMPLE_RATE, clipGain, encodeWav, findSoundBounds, mixdown, planMix, renderMix, type MixBlock } from '../core/audioMix';
+import { downloadBlob, encodeMp3, nextDownload, safeFileName } from '../core/mp3';
 import { MAX_UPLOAD_BYTES, uploadSchoolAudio, type SchoolAssetDoc } from '../core/schoolSchedule';
 import type { Asset } from '../core/types';
 import { formatDuration } from './NowPlaying';
@@ -69,7 +70,7 @@ export default function AudioComposer({ neisCode, assets, targets: targetIds = [
   const [normalize, setNormalize] = useState(true);
   const [name, setName] = useState('');
   const [result, setResult] = useState<Result | null>(null);
-  const [busy, setBusy] = useState<'make' | 'save' | null>(null);
+  const [busy, setBusy] = useState<'make' | 'save' | 'download' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   /** 디코딩 결과 (음원 id 또는 내 PC 파일 기준) */
@@ -228,6 +229,42 @@ export default function AudioComposer({ neisCode, assets, targets: targetIds = [
         }
       }
       onSaved(saved, failed, removeOriginals);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProgress(null);
+      setBusy(null);
+    }
+  }
+
+  /** 내려받을 파일 이름: 학교 방송 프로그램에서 원래 파일 이름 그대로 쓰도록 「(타종)」은 뺀다 */
+  const downloadName = (label: string) => `${safeFileName(label.replace(/\s*\(타종\)$/, ''))}.mp3`;
+
+  /** 만든 결과를 MP3로 내려받기 (학교 방송 프로그램용). 일괄이면 고른 음원마다 하나씩 */
+  async function download() {
+    if (!result) return;
+    setBusy('download');
+    setError(null);
+    stop();
+    try {
+      if (!many) {
+        downloadBlob(await encodeMp3(result.buffer.getChannelData(0), MIX_SAMPLE_RATE), downloadName(name.trim() || autoName(targets[0])));
+        return;
+      }
+      const failed: string[] = [];
+      for (const [i, t] of targets.entries()) {
+        setProgress(`${i + 1}/${targets.length}`);
+        try {
+          const r = i === previewIdx ? result : await render(t);
+          downloadBlob(await encodeMp3(r.buffer.getChannelData(0), MIX_SAMPLE_RATE), downloadName(autoName(t)));
+          await nextDownload();
+        } catch (e) {
+          failed.push(`${assetLabel(t)}: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+          if (i !== previewIdx) decoded.current.delete(t);
+        }
+      }
+      if (failed.length) setError(`내려받지 못한 음원: ${failed.join(', ')}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -396,6 +433,9 @@ export default function AudioComposer({ neisCode, assets, targets: targetIds = [
                 <input type="checkbox" checked={removeOriginals} disabled={disabled} onChange={(e) => setRemoveOriginals(e.target.checked)} /> 저장 후 원본 삭제
               </label>
             )}
+            <button onClick={() => void download()} disabled={disabled} title="학교 방송 프로그램에 넣을 MP3 파일로 내려받습니다 (저장과 별개)">
+              {busy === 'download' ? `내려받는 중… ${progress ?? ''}` : many ? `⬇ ${targets.length}개 모두 MP3로 받기` : '⬇ MP3 내려받기'}
+            </button>
             <button className="primary" onClick={() => void save()} disabled={disabled}>
               {busy === 'save' ? `저장 중… ${progress ?? ''}` : many ? `${targets.length}개 모두 만들어 저장` : '학교 음원으로 저장'}
             </button>

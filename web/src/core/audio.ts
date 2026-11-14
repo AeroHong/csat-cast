@@ -81,8 +81,46 @@ export class AudioEngine {
   private playbackSeq = 0;
   private analyser: AnalyserNode | null = null;
 
+  /** '대기 중 출력 쉬기'로 일부러 출력을 멈춰 둔 상태 */
+  private restingFlag = false;
+
+  /** 소리를 낼 수 있는 상태. 일부러 쉬고 있는 동안도 켜진 것으로 본다 (다음 방송 전에 다시 켠다) */
   get unlocked(): boolean {
+    return this.ctx?.state === 'running' || this.restingFlag;
+  }
+
+  get resting(): boolean {
+    return this.restingFlag;
+  }
+
+  /** 지금 소리를 내고 있는(또는 예약된) 재생이 있는지 */
+  get busy(): boolean {
+    return this.active.size > 0;
+  }
+
+  /**
+   * 대기 중 출력 쉬기: 오디오 출력을 멈춰 노트북·믹서로 가는 신호를 끊는다 (대기 중 잡음 줄이기).
+   * 재생 중이거나 예약된 소리가 있으면 쉬지 않는다.
+   */
+  async rest(): Promise<boolean> {
+    const ctx = this.ctx;
+    if (!ctx || this.restingFlag || this.active.size > 0 || ctx.state !== 'running') return false;
+    this.restingFlag = true;
+    await ctx.suspend().catch(() => undefined);
+    return true;
+  }
+
+  /** 쉬던 출력을 다시 켠다. 켜졌으면 true */
+  async wake(timeoutMs = 1000): Promise<boolean> {
+    if (!this.restingFlag) return this.ctx?.state === 'running';
+    this.restingFlag = false;
+    await this.tryResume(timeoutMs);
     return this.ctx?.state === 'running';
+  }
+
+  /** 쉬는 중에 소리를 내야 하면 바로 깨운다 (수동 재생·테스트 톤) */
+  private wakeForSound() {
+    if (this.restingFlag) void this.wake();
   }
 
   get state(): AudioContextState | 'none' {
@@ -92,7 +130,7 @@ export class AudioEngine {
   /** 사용자 클릭 이벤트 안에서 호출하면 확실히 켜진다 (브라우저 자동재생 정책). */
   async unlock(): Promise<boolean> {
     const ctx = this.ensureContext();
-    if (ctx.state !== 'running') await ctx.resume();
+    if (ctx.state !== 'running' && !this.restingFlag) await ctx.resume();
     return this.unlocked;
   }
 
@@ -102,7 +140,7 @@ export class AudioEngine {
    */
   async tryResume(timeoutMs = 800): Promise<boolean> {
     const ctx = this.ensureContext();
-    if (ctx.state === 'running') return true;
+    if (ctx.state === 'running' || this.restingFlag) return true;
     await Promise.race([ctx.resume().catch(() => undefined), new Promise((r) => setTimeout(r, timeoutMs))]);
     return this.unlocked;
   }
@@ -273,6 +311,7 @@ export class AudioEngine {
     const ctx = this.ensureContext();
     const buffer = this.buffers.get(assetId);
     if (!buffer) throw new Error(`음원이 준비되지 않았습니다: ${assetId}`);
+    this.wakeForSound();
     const delaySec = Math.max(0, (serverAt - serverNow) / 1000);
     const src = ctx.createBufferSource();
     src.buffer = buffer;
@@ -314,6 +353,7 @@ export class AudioEngine {
   /** 볼륨 확인용 짧은 테스트 톤 */
   testTone(durationSec = 1.5) {
     const ctx = this.ensureContext();
+    this.wakeForSound();
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
     osc.frequency.value = 880;

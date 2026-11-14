@@ -82,6 +82,25 @@ class FakeAudio {
   tryResume() {
     return Promise.resolve(this.state === 'running');
   }
+  /** 대기 중 출력 쉬기 */
+  resting = false;
+  busy = false;
+  restCalls = 0;
+  /** false면 다시 켜기에 실패한다 (자동재생 차단 등) */
+  wakeWorks = true;
+  rest() {
+    if (this.resting || this.busy || this.state !== 'running') return Promise.resolve(false);
+    this.restCalls++;
+    this.resting = true;
+    this.state = 'suspended';
+    return Promise.resolve(true);
+  }
+  wake() {
+    if (!this.resting) return Promise.resolve(this.state === 'running');
+    this.resting = false;
+    if (this.wakeWorks) this.state = 'running';
+    return Promise.resolve(this.state === 'running');
+  }
   /** 진행 중인 재생을 모두 끝낸다 (기본: 끝까지 끊김 없이) */
   endAll(over: Partial<PlayEnd> = {}) {
     for (const p of this.plays) if (!p.done) p.end({ playedMs: 3000, durationMs: 3000, gapMs: 0, notes: [], ...over });
@@ -619,5 +638,109 @@ describe('judgePlay', () => {
   });
   it('소리가 멈췄던 시간이 있으면 끊김 있음', () => {
     expect(judgePlay(end({ gapMs: 700 }), false)!.kind).toBe('gap');
+  });
+});
+
+describe('대기 중 출력 쉬기', () => {
+  // 다음 방송까지 5분씩 비는 계획
+  const sparse: PlannedCue[] = [
+    { cue: cue('bell', 'bell'), at: 300_000 },
+    { cue: cue('ment', 'ment'), at: 600_000 },
+  ];
+  const watchdog = () => (player as unknown as { watchdog(): boolean }).watchdog();
+  const pastGrace = () => ((player as unknown as { wokeAt: number }).wokeAt = -Infinity);
+
+  it('설정이 꺼져 있으면 쉬지 않는다 (기존 동작)', async () => {
+    player.arm(sparse, 'test');
+    tick();
+    await flush();
+    expect(audio.restCalls).toBe(0);
+    expect(player.snapshot().outputResting).toBe(false);
+  });
+
+  it('다음 방송까지 2분 넘게 남으면 쉬고, 60초 전에 다시 켜서 정시에 송출한다', async () => {
+    player.setIdleRest(true);
+    player.arm(sparse, 'test');
+    tick();
+    await flush();
+    expect(audio.resting).toBe(true);
+    expect(player.snapshot().outputResting).toBe(true);
+    // 쉬는 중에는 '출력 꺼짐' 경보를 띄우지 않는다
+    watchdog();
+    expect(player.snapshot().alarms).toEqual([]);
+
+    clock.t = 239_000; // 다음 방송 61초 전: 아직 쉼
+    tick();
+    expect(audio.resting).toBe(true);
+    clock.t = 240_000; // 60초 전: 다시 켬
+    tick();
+    await flush();
+    expect(audio.resting).toBe(false);
+    expect(audio.state).toBe('running');
+
+    clock.t = 298_500;
+    tick();
+    expect(audio.played.map((p) => p.assetId)).toEqual(['bell']);
+    expect(player.snapshot().alarms).toEqual([]);
+  });
+
+  it('다음 방송이 2분 안이면 쉬지 않는다', async () => {
+    player.setIdleRest(true);
+    player.arm([{ cue: cue('bell', 'bell'), at: 100_000 }], 'test');
+    tick();
+    await flush();
+    expect(audio.restCalls).toBe(0);
+  });
+
+  it('소리가 나는 중에는 쉬지 않는다', async () => {
+    player.setIdleRest(true);
+    audio.busy = true;
+    player.arm(sparse, 'test');
+    tick();
+    await flush();
+    expect(audio.restCalls).toBe(0);
+  });
+
+  it('다시 켜기에 실패하면 잠깐 기다린 뒤 출력 꺼짐 경보를 띄운다', async () => {
+    player.setIdleRest(true);
+    player.arm(sparse, 'test');
+    tick();
+    await flush();
+    audio.wakeWorks = false;
+    clock.t = 240_000;
+    tick();
+    await flush();
+    watchdog();
+    expect(player.snapshot().alarms).toEqual([]); // 켜지기를 기다리는 중
+    pastGrace();
+    watchdog();
+    expect(player.snapshot().alarms.length).toBe(1);
+  });
+
+  it('설정을 끄거나 자동 방송을 멈추면 바로 다시 켠다', async () => {
+    player.setIdleRest(true);
+    player.arm(sparse, 'test');
+    tick();
+    await flush();
+    player.setIdleRest(false);
+    await flush();
+    expect(audio.resting).toBe(false);
+
+    player.setIdleRest(true);
+    await flush();
+    expect(audio.resting).toBe(true);
+    player.disarm();
+    await flush();
+    expect(audio.resting).toBe(false);
+  });
+
+  it('쉬는 중에 수동 재생하면 출력을 켜고 재생한다', async () => {
+    player.setIdleRest(true);
+    player.arm(sparse, 'test');
+    tick();
+    await flush();
+    await player.playNow('bell');
+    expect(audio.resting).toBe(false);
+    expect(audio.played.map((p) => p.assetId)).toEqual(['bell']);
   });
 });

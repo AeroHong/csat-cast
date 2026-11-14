@@ -80,6 +80,10 @@ export interface PlayerSnapshot {
   alarms: string[];
   /** 자동 방송 중인 날짜 (KST). 리허설은 null */
   runDate: string | null;
+  /** 대기 중 출력 쉬기 설정 */
+  idleRest: boolean;
+  /** 지금 출력을 쉬고 있는지 */
+  outputResting: boolean;
 }
 
 const TICK_MS = 250;
@@ -91,6 +95,12 @@ const STALL_WARN_MS = 3_000;
  * 전부 올려 두지 않고 곧 나갈 것만 준비했다가 끝나면 내린다.
  */
 const PREPARE_AHEAD_MS = 3 * 60_000;
+/** 대기 중 출력 쉬기: 다음 방송까지 이보다 많이 남았을 때만 쉰다 */
+export const REST_MIN_IDLE_MS = 2 * 60_000;
+/** 대기 중 출력 쉬기: 다음 방송 이만큼 전에 출력을 다시 켠다 */
+export const WAKE_AHEAD_MS = 60_000;
+/** 다시 켠 직후 출력이 켜지기까지 기다리는 시간 (이 사이에는 '출력 꺼짐' 경보를 띄우지 않는다) */
+const WAKE_GRACE_MS = 5_000;
 
 export const ALARM_AUDIO_OFF = '오디오 출력이 꺼져 있음 — 방송 PC 화면을 클릭하세요';
 
@@ -99,6 +109,10 @@ export const ALARM_AUDIO_OFF = '오디오 출력이 꺼져 있음 — 방송 PC 
  * UI와 분리되어 있어 화면이 다시 그려져도 재생 상태가 유지된다.
  */
 export class PlayerController {
+  /** 대기 중 출력 쉬기 (담당자 설정, 기본 꺼짐) */
+  private idleRest = false;
+  /** 쉬던 출력을 마지막으로 다시 켠 때 (performance.now) */
+  private wokeAt = -Infinity;
   /** 받은 계획 그대로 */
   private basePlan: PlannedCue[] = [];
   /** 본령 지연을 반영한 계획 (실제로 이 시각에 송출) */
@@ -196,6 +210,8 @@ export class PlayerController {
   disarm(byUser = true) {
     this.stopTicker?.();
     this.stopTicker = null;
+    // 자동 방송을 멈추면 쉬던 출력은 켜 둔다 (수동 재생·테스트 톤이 바로 나오게)
+    this.wakeOutput();
     if (this.mode !== 'idle') {
       this.push(byUser ? 'warn' : 'info', '자동 방송 중지');
       this.stoppedByUser = byUser;
@@ -209,6 +225,52 @@ export class PlayerController {
     this.alarms.clear();
     this.mode = 'idle';
     this.emit();
+  }
+
+  /** 대기 중 출력 쉬기 켜기/끄기. 끄면 쉬던 출력을 바로 켠다 */
+  setIdleRest(on: boolean) {
+    if (this.idleRest === on) return;
+    this.idleRest = on;
+    if (!on) this.wakeOutput();
+    else this.manageRest(this.clock.now());
+    this.emit();
+  }
+
+  private wakeOutput() {
+    if (!this.audio.resting) return;
+    this.wokeAt = performance.now();
+    void this.audio.wake().then(() => this.emit());
+  }
+
+  /**
+   * 대기 중 출력 쉬기: 소리 나는 방송이 없고 다음 방송까지 2분 넘게 남으면 출력을 멈추고,
+   * 다음 방송 60초 전에 다시 켠다. 상태가 바뀌었으면 true
+   */
+  private manageRest(now: number): boolean {
+    const resting = this.audio.resting ?? false;
+    if (!this.idleRest || !this.armed) {
+      if (resting) {
+        this.wakeOutput();
+        return true;
+      }
+      return false;
+    }
+    const busy = this.audio.busy || Object.values(this.states).some((s) => s === 'playing' || s === 'scheduled');
+    const next = this.plan.find(({ cue }) => (this.states[cue.id] ?? 'pending') === 'pending');
+    const untilNext = next ? next.at - now : Infinity;
+    if (resting) {
+      if (!busy && untilNext > WAKE_AHEAD_MS) return false;
+      this.wakeOutput();
+      this.push('info', '다음 방송 준비: 오디오 출력을 다시 켭니다');
+      return true;
+    }
+    if (busy || untilNext <= REST_MIN_IDLE_MS || this.audio.state !== 'running') return false;
+    void this.audio.rest().then((ok) => {
+      if (!ok) return;
+      this.push('info', `대기 중 출력 쉼 — 다음 방송 ${Math.round(WAKE_AHEAD_MS / 1000)}초 전에 다시 켭니다`);
+      this.emit();
+    });
+    return false;
   }
 
   get wasStoppedByUser() {
@@ -236,6 +298,10 @@ export class PlayerController {
     const counts = prev === 'pending' || prev === 'skipped' || prev === 'failed';
     if (counts) this.states[cueId] = 'done';
     try {
+      if (this.audio.resting) {
+        this.wokeAt = performance.now();
+        await this.audio.wake();
+      }
       this.prepared.add(item.cue.assetId);
       await this.audio.prepare(item.cue.assetId);
       const now = this.clock.now();
@@ -354,6 +420,8 @@ export class PlayerController {
       events: this.events,
       alarms: [...this.alarms],
       runDate: this.runDate,
+      idleRest: this.idleRest,
+      outputResting: this.audio.resting ?? false,
     };
   }
 
@@ -383,6 +451,7 @@ export class PlayerController {
       changed = this.watchdog() || changed;
     }
     const now = this.clock.now();
+    changed = this.manageRest(now) || changed;
     // 소리가 꺼진 오디오에 걸어 둔 예약은 소리 없이 시각만 지나가고, 켜지는 순간 늦게 울린다.
     // 꺼져 있는 동안은 예약하지 않고 대기로 두어, 켜진 뒤 허용 지연 이내면 재생·넘었으면 건너뜀으로 처리한다.
     const audioOn = this.audio.state === 'running';
@@ -458,7 +527,11 @@ export class PlayerController {
       changed = true;
     }
     const audioOk = this.audio.state === 'running';
-    if (!audioOk) {
+    // 일부러 쉬는 중이거나, 막 다시 켜서 켜지기를 기다리는 중이면 꺼짐 경보를 띄우지 않는다
+    const restingOrWaking = this.audio.resting || performance.now() - this.wokeAt < WAKE_GRACE_MS;
+    if (!audioOk && restingOrWaking) {
+      if (!this.audio.resting) void this.audio.tryResume(300);
+    } else if (!audioOk) {
       if (!this.alarms.has(ALARM_AUDIO_OFF)) {
         this.alarms.add(ALARM_AUDIO_OFF);
         this.push('error', '오디오 출력이 꺼졌습니다. 다시 켜는 중…');

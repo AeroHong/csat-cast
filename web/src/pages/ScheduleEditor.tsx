@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { audioEngine } from '../core/audio';
+import { audioEngine, fetchAssetBytes } from '../core/audio';
+import { mixdown, MIX_SAMPLE_RATE } from '../core/audioMix';
+import { downloadBlob, encodeMp3, nextDownload, safeFileName } from '../core/mp3';
 import { loadSchoolAssetDocs } from '../core/catalog';
 import {
   checkSchedule,
@@ -414,6 +416,36 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
     }
   }
 
+  /**
+   * 고른 음원을 MP3로 내려받기 (학교 방송 프로그램에 넣을 파일).
+   * mp3는 올린 파일 그대로, wav(타종 붙여 저장한 음원 등)는 MP3로 바꾼다. 이름의 「(타종)」은 빼서 원래 파일 이름과 맞춘다.
+   */
+  function downloadSelected(ids: string[]) {
+    void run('download', async () => {
+      const failed: string[] = [];
+      for (const [i, id] of ids.entries()) {
+        setBusy(`download:${i + 1}/${ids.length}`);
+        const d = docs.find(([x]) => x === id)?.[1];
+        const asset = assets.find((a) => a.id === id);
+        if (!d || !asset) continue;
+        const name = `${safeFileName(d.label.replace(/\s*\(타종\)$/, ''))}.mp3`;
+        try {
+          const bytes = await fetchAssetBytes(asset);
+          if (d.contentType === 'audio/mpeg') downloadBlob(new Blob([bytes], { type: 'audio/mpeg' }), name);
+          else {
+            const buf = await new OfflineAudioContext(1, 1, MIX_SAMPLE_RATE).decodeAudioData(bytes.slice(0));
+            downloadBlob(await encodeMp3(mixdown(buf), buf.sampleRate), name);
+          }
+          await nextDownload();
+        } catch (e) {
+          failed.push(`${d.label}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      if (failed.length) throw new Error(`내려받지 못한 음원: ${failed.join(', ')}`);
+      setNotice(`${ids.length}개를 MP3로 내려받았습니다 (브라우저 '다운로드' 폴더). 학교 방송 프로그램 음원 폴더에 넣어 쓰세요.`);
+    });
+  }
+
   const disabled = locked || busy !== null;
   /** 지금 목록에 있는 음원 중 고른 수 (삭제된 음원은 빼고 센다) */
   const selectedCount = docs.filter(([id]) => selected.has(id)).length;
@@ -478,6 +510,15 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
               title="「원래 이름 (타종)」 음원은 원래 음원 자리에, 이름 앞에 시각이 있으면 같은 시각 줄에 연결합니다"
             >
               📋 선택한 {selectedCount}개 시간표에 적용
+            </button>
+          )}
+          {selectedCount > 0 && (
+            <button
+              onClick={() => downloadSelected(docs.map(([id]) => id).filter((id) => selected.has(id)))}
+              disabled={busy !== null || composing !== null}
+              title="학교 방송 프로그램에 넣을 MP3 파일로 내려받습니다. 이름의 「(타종)」은 빼고 받습니다."
+            >
+              {busy?.startsWith('download') ? `내려받는 중… ${busy.split(':')[1] ?? ''}` : `⬇ 선택한 ${selectedCount}개 MP3로 받기`}
             </button>
           )}
         </div>

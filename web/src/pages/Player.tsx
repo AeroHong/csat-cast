@@ -72,6 +72,9 @@ export default function Player() {
   const power = usePower();
   /** 방송 소리 출력 장치 (앰프 쪽 장치로만 보내 다른 소리가 섞이지 않게) */
   const output = useAudioOutput();
+  /** 대기 중 출력 쉬기 (이 PC에 기억) */
+  const [idleRest, setIdleRestState] = useState(loadIdleRest);
+  useEffect(() => player.setIdleRest(idleRest), [idleRest]);
   /** 이 PC의 방송 회차별 결과 기록 */
   const [reports, setReports] = useState<RunReport[]>([]);
   const reportRef = useRef<RunReport | null>(null);
@@ -742,7 +745,9 @@ export default function Player() {
     {
       ok: unlocked,
       label: '소리 출력',
-      detail: unlocked ? (autoplayAllowed ? '켜짐 (자동)' : '켜짐') : '꺼짐 — 화면 아무 곳이나 한 번 클릭하세요',
+      detail: unlocked
+        ? (autoplayAllowed ? '켜짐 (자동)' : '켜짐') + (snap.outputResting ? ' · 대기 중 출력 쉼 (다음 방송 60초 전에 다시 켜짐)' : '')
+        : '꺼짐 — 화면 아무 곳이나 한 번 클릭하세요',
     },
     {
       ok: sound === 'heard',
@@ -997,6 +1002,24 @@ export default function Player() {
                   </p>
                 </div>
               )}
+              <div className="output-pick">
+                <label className="inline">
+                  <input
+                    type="checkbox"
+                    checked={idleRest}
+                    onChange={(e) => {
+                      setIdleRestState(e.target.checked);
+                      saveIdleRest(e.target.checked);
+                    }}
+                  />{' '}
+                  <strong>대기 중 출력 쉬기</strong> (대기 잡음 줄이기)
+                </label>
+                <p className="muted small">
+                  다음 방송까지 2분 넘게 남으면 오디오 출력을 멈춰, 대기 중 믹서·앰프로 가는 잡음(화이트 노이즈)을 줄입니다. 다음 방송 60초 전에
+                  다시 켜고, 켜지지 않으면 경보를 띄웁니다. 처음 쓸 때는 리허설로 먼저 확인하세요
+                  {snap.outputResting ? ' · 지금 출력 쉬는 중' : ''}.
+                </p>
+              </div>
               <details className="power-help">
                 <summary>절전·다른 소리 막기 설정 방법 (방송 PC·노트북·태블릿 필수)</summary>
                 <p className="muted small">
@@ -1431,4 +1454,23 @@ function ExamDelayControl() {
       </div>
     </div>
   );
+}
+
+const IDLE_REST_KEY = 'csat-cast:idle-rest';
+
+function loadIdleRest(): boolean {
+  try {
+    return localStorage.getItem(IDLE_REST_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function saveIdleRest(on: boolean) {
+  try {
+    if (on) localStorage.setItem(IDLE_REST_KEY, '1');
+    else localStorage.removeItem(IDLE_REST_KEY);
+  } catch {
+    /* 저장 못 해도 이번 화면에는 적용 */
+  }
 }
