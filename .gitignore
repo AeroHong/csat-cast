@@ -14,3 +14,6 @@ service-account*.json
 web/public/audio/builtin/*.mp3
 
 .claude/settings.local.json
+
+# 학교 방송 시나리오 (공개 저장소에 올리지 않음)
+/2027학년 수능 방송 시나리오(선유고).hwpx
