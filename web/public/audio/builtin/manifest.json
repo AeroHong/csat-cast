@@ -9,7 +9,7 @@
     "file": "p0-notice.mp3",
     "label": "시험 준비 입실 완료 · 유의사항 안내",
     "source": "02-0810-0교시-안내.mp3",
-    "sha256": "2df09762e9619549964786bdf33e442cd8f7fccf1f1c403d6eaa2d97b431099c"
+    "sha256": "7df7800eddda1a49644dc282f402282b69f18fe42bb653d0e2afbf1079ca6b36"
   },
   "p1-prep": {
     "file": "p1-prep.mp3",
@@ -51,7 +51,7 @@
     "file": "p2-prep.mp3",
     "label": "2교시 수학 예비령 (답안지 배부)",
     "source": "09-1020-2교시-예비령.mp3",
-    "sha256": "60c587c1a655feeb0a0d744e5863ddcca9647f6f30a902dd54c1191ae9fd4ed1"
+    "sha256": "45984769a434e1ed01893b9a867445e2920f82503a09ffe2509f3494ff49557a"
   },
   "p2-ready": {
     "file": "p2-ready.mp3",
@@ -87,7 +87,7 @@
     "file": "p3-prep.mp3",
     "label": "3교시 영어 예비령 (답안지 배부)",
     "source": "15-1300-3교시-예비령.mp3",
-    "sha256": "9003e1a04fe64f06ece6af202e73fda4e1e95401e83392668a48d160bfeaf5fc"
+    "sha256": "ee8ab3cb335c5ccf2a287764eb51d16a298c4dd02ca33ec2c4dd213893058e67"
   },
   "p3-ready": {
     "file": "p3-ready.mp3",
@@ -117,7 +117,7 @@
     "file": "p4-prep.mp3",
     "label": "4교시 한국사·탐구 한국사 예비령 (답안지 배부)",
     "source": "20-1440-4교시-예비령.mp3",
-    "sha256": "07fe84fcbebfde411cb77b1e6d3f38bef9f6c5b740647007fdd4a8255ab1c7ba"
+    "sha256": "0b064f21a4fa70135bc3c35d58f15bfe290b3a222affa804ca86ef4eb94efcbe"
   },
   "p4-ready": {
     "file": "p4-ready.mp3",
@@ -213,7 +213,7 @@
     "file": "p5-prep.mp3",
     "label": "5교시 제2외국어/한문 예비령 (답안지 배부)",
     "source": "36-1655-5교시-예비령.mp3",
-    "sha256": "00f95119e15a9eb01938a85be2e0bd7924cb50a0f5aa6daf8d4cfa7e4b83c14d"
+    "sha256": "5e42b03e3cce963531d63a9f2bf608307f43aecbf451b1b3720d14d230ccdeef"
   },
   "p5-ready": {
     "file": "p5-ready.mp3",
