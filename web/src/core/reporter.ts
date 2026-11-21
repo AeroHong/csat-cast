@@ -40,6 +40,8 @@ export interface ChannelStatus {
   deviceId?: string;
   /** 이 PC가 쓰는 시간표의 지문 — 서버 설정에서 계산한 값과 다르면 관리자 화면에 경고 */
   planHash?: string;
+  /** 학교 시험 방송으로 진행 중이면 그 시험 (수능 시간표와 지문을 비교하지 않는다) */
+  exam?: { id: string; name: string } | null;
   /** 이 PC가 실제로 틀 방송과 각각의 결과 (자동 방송 중일 때만) */
   timeline?: TimelineEntry[] | null;
   /** 자동 방송 중인 날짜 (리허설은 null) */

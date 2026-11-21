@@ -110,8 +110,8 @@ export function buildRows(
       const modeOk = mode === 'all' || s?.mode === mode;
       const armed = !!s?.armed && modeOk;
       const timeline = armed && Array.isArray(s?.timeline) ? s!.timeline! : null;
-      const devices = devicesOpen(presence[code]?.[ch]);
-      const hashMismatch = !!s?.planHash && expected.length > 0 && s.planHash !== cuesHash(expected);
+      const devices = devicesOpen(presence[code]?.[ch], now);
+      const hashMismatch = !s?.exam && !!s?.planHash && expected.length > 0 && s.planHash !== cuesHash(expected);
       const sit = chCfg && !chCfg.customCues ? csatSituation(chCfg.templateId) : undefined;
       const row: ChannelRow = {
         code,

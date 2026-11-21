@@ -1,40 +1,74 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import TimeInput from '../components/TimeInput';
 import { audioEngine, fetchAssetBytes } from '../core/audio';
+import { serverClock } from '../core/clock';
+import { kstEpoch } from '../core/scheduler';
 import { mixdown, MIX_SAMPLE_RATE } from '../core/audioMix';
 import { byLabel, downloadBlob, encodeMp3, nextDownload, safeFileName } from '../core/mp3';
 import { loadSchoolAssetDocs } from '../core/catalog';
 import {
   checkSchedule,
   deleteSchoolAudio,
-  saveChannel,
   toSchoolAsset,
   uploadSchoolAudio,
   type SchoolAssetDoc,
 } from '../core/schoolSchedule';
 import { assignByFileName, looksLikeSchedule, parseScheduleRows, timeFromFileName } from '../core/scheduleImport';
-import type { Asset, ChannelConfig, Cue, SchoolProfile, Template } from '../core/types';
+import type { Asset, Cue, Template } from '../core/types';
 import AudioComposer, { type Saved } from './AudioComposer';
 import { formatDuration } from './NowPlaying';
 
+/**
+ * 무엇을 편집하는가: 수능 채널의 학교 시간표(customCues) 또는 외부 시험 방송의 시간표.
+ */
+export interface EditTarget {
+  /** 편집 내용 임시 보관·화면 초기화 기준 (대상마다 다르게) */
+  key: string;
+  saved: Cue[] | undefined;
+  /** 저장 (실패하면 throw) */
+  save: (cues: Cue[]) => Promise<void>;
+  /** 학교 시간표 지우기 (수능 채널만) */
+  revert?: () => Promise<void>;
+  /** 음원 없는 줄·빈 시간표도 저장 (시험 방송: 시간표 먼저 만들고 음원은 나중에) */
+  allowMissingAudio?: boolean;
+  title: string;
+  status: ReactNode;
+  /** 아직 시간표가 없을 때 안내 */
+  intro?: ReactNode;
+  savedNotice: string;
+  /** 복사해서 시작할 평가원 유형 (수능 채널만) */
+  template?: Template;
+  /**
+   * 시험 방송이면 그 시험 id. 음원 목록에는 이 시험에서 올렸거나 이 시험에서 쓰는 음원만 보이고, 평가원 음원은 쓰지 않는다.
+   * 없으면 수능 시간표: 시험 방송에서 올린 음원은 보이지 않는다.
+   */
+  examId?: string;
+}
+
 interface Props {
   neisCode: string;
-  profile: SchoolProfile;
-  channel: ChannelConfig;
-  /** 이 채널에 지정된 평가원 유형 (복사해서 시작할 때 씀) */
-  template: Template | undefined;
+  target: EditTarget;
   assets: Asset[];
-  /** 자동 방송 중에는 고칠 수 없다 */
+  /** 전부 고칠 수 없음 (다른 방송이 자동 진행 중 등) */
   locked: boolean;
+  /** 이 대상을 지금 자동 방송 중: 아직 안 나간 줄만 고칠 수 있다 */
+  live?: { date: string; lockedIds: Set<string> };
+  /** 자동 방송 중 (미리 듣기·타종 붙이기는 방송 스피커로 나가므로 막는다) */
+  audioBusy: boolean;
   /** 같은 채널을 자동 방송 중인 다른 PC (담당자 이름) */
   othersArmed?: string[];
-  onProfile: (p: SchoolProfile) => void;
+  /** 이 대상 밖(다른 채널·다른 시험)에서 쓰는 음원 — 삭제 금지 */
+  usedElsewhere: (assetId: string) => boolean;
   onAssets: (a: Asset[]) => void;
 }
+
+/** 방송 중 저장할 때, 이보다 가까운 시각의 줄은 송출 준비가 늦어 건너뛸 수 있다 */
+const LIVE_EDIT_MARGIN_MS = 10_000;
 
 const newId = () => `s-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 /** 저장하지 않은 편집 내용 (이 PC에만). 음원을 다 만들기 전에 새로고침해도 엑셀로 채운 시간표가 남게 */
-const draftKey = (neisCode: string, channelId: string) => `csat-cast:schedule-draft:${neisCode}:${channelId}`;
+const draftKey = (neisCode: string, key: string) => `csat-cast:schedule-draft:${neisCode}:${key}`;
 function loadStoredDraft(neisCode: string, channelId: string, saved: Cue[] | undefined): Cue[] | null {
   try {
     const v = localStorage.getItem(draftKey(neisCode, channelId));
@@ -60,15 +94,18 @@ function addMinutes(time: string, min: number) {
  * 학교 자체 시간표 편집 + 학교 음원 관리.
  * 저장하기 전까지는 방송에 반영되지 않는다. 저장하면 이 채널은 평가원 유형 대신 이 시간표로 방송한다.
  */
-export default function ScheduleEditor({ neisCode, profile, channel, template, assets, locked, othersArmed = [], onProfile, onAssets }: Props) {
-  const saved = channel.customCues;
-  const initialDraft = () => loadStoredDraft(neisCode, channel.id, saved) ?? (saved ? structuredClone(saved) : null);
+export default function ScheduleEditor({ neisCode, target, assets, locked, live, audioBusy, othersArmed = [], usedElsewhere, onAssets }: Props) {
+  const saved = target.saved;
+  const template = target.template;
+  const tkey = target.key;
+  const rowLocked = (id: string) => !!live?.lockedIds.has(id);
+  const initialDraft = () => loadStoredDraft(neisCode, tkey, saved) ?? (saved ? structuredClone(saved) : null);
   const [draft, setDraft] = useState<Cue[] | null>(initialDraft);
-  const [docs, setDocs] = useState<[string, SchoolAssetDoc][]>([]);
+  const [allDocs, setDocs] = useState<[string, SchoolAssetDoc][]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(() =>
-    loadStoredDraft(neisCode, channel.id, saved)
+    loadStoredDraft(neisCode, tkey, saved)
       ? '저장하지 않은 편집 내용을 이어서 불러왔습니다. 음원을 모두 연결한 뒤 [저장]해야 방송에 반영됩니다.'
       : null,
   );
@@ -100,35 +137,44 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
     }
     setDraft(initialDraft());
     setImportNotes([]);
-  }, [channel.id, channel.customCues]);
+  }, [tkey, JSON.stringify(saved ?? null)]);
 
   useEffect(() => {
     void loadSchoolAssetDocs(neisCode).then(setDocs);
   }, [neisCode]);
 
-  const schoolAssets = assets.filter((a) => a.source !== 'builtin').sort(byLabel);
+  /** 이 시간표에서 쓰는 음원 (다른 쪽 음원이라도 이미 연결돼 있으면 목록에 보인다) */
+  const usedHere = (id: string) => [...(draft ?? []), ...(saved ?? [])].some((c) => c.assetId === id);
+  /** 수능 시간표와 시험 방송은 음원 목록을 따로 쓴다 */
+  const inScope = (id: string, examOf: string | undefined) => (target.examId ? examOf === target.examId : !examOf) || usedHere(id);
+  const docs = allDocs.filter(([id, d]) => inScope(id, d.examId));
+  const schoolAssets = assets.filter((a) => a.source !== 'builtin' && inScope(a.id, a.examId)).sort(byLabel);
   /** 학교 음원 목록 (화면에 보이는 이름순. 고른 음원도 이 순서로 처리한다) */
   const sortedDocs = useMemo(() => [...docs].sort((a, b) => byLabel(a[1], b[1])), [docs]);
-  const builtinAssets = assets.filter((a) => a.source === 'builtin');
+  const builtinAssets = target.examId ? [] : assets.filter((a) => a.source === 'builtin');
   const assetIds = useMemo(() => new Set(assets.map((a) => a.id)), [assets]);
-  const check = useMemo(() => (draft ? checkSchedule(draft, assetIds) : null), [draft, assetIds]);
+  const check = useMemo(
+    () =>
+      draft ? checkSchedule(draft, assetIds, { allowMissingAudio: target.allowMissingAudio, allowEmpty: target.allowMissingAudio }) : null,
+    [draft, assetIds, target.allowMissingAudio],
+  );
   const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(saved ?? null);
   const missingAudio = [...(draft ?? [])].filter((c) => !c.assetId).sort((a, b) => a.time.localeCompare(b.time));
 
   // 저장하지 않은 편집 내용은 이 PC에 보관하고, 저장·취소하면 지운다
   useEffect(() => {
     try {
-      if (dirty && draft) localStorage.setItem(draftKey(neisCode, channel.id), JSON.stringify(draft));
-      else localStorage.removeItem(draftKey(neisCode, channel.id));
+      if (dirty && draft) localStorage.setItem(draftKey(neisCode, tkey), JSON.stringify(draft));
+      else localStorage.removeItem(draftKey(neisCode, tkey));
     } catch {
       /* 보관 못 해도 편집은 계속 */
     }
-  }, [draft, dirty, neisCode, channel.id]);
+  }, [draft, dirty, neisCode, tkey]);
   const periods = [...new Set((draft ?? []).map((c) => c.period).filter(Boolean))];
   /** 편집 중인 시간표에서 쓰는 곳 수 */
   const usage = (id: string) => (draft ?? saved ?? []).filter((c) => c.assetId === id).length;
   /** 저장된 시간표나 편집 중인 시간표 어디서든 쓰면 삭제할 수 없다 */
-  const inUse = (id: string) => [...(draft ?? []), ...(saved ?? [])].some((c) => c.assetId === id);
+  const inUse = (id: string) => [...(draft ?? []), ...(saved ?? [])].some((c) => c.assetId === id) || usedElsewhere(id);
 
   async function run(label: string, fn: () => Promise<void>) {
     setBusy(label);
@@ -180,19 +226,25 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
   const save = () =>
     run('save', async () => {
       if (!draft || check?.errors.length) return;
-      if (check?.warnings.length && !window.confirm(`확인이 필요합니다:\n\n${check.warnings.join('\n')}\n\n이대로 저장할까요?`)) return;
+      const warnings = [...(check?.warnings ?? [])];
+      if (live) {
+        // 방송 중: 곧 나갈(또는 이미 지난) 시각으로 바꾼 줄은 건너뛰게 된다
+        const soon = serverClock.now() + LIVE_EDIT_MARGIN_MS;
+        const before = new Map((saved ?? []).map((c) => [c.id, JSON.stringify(c)]));
+        const late = draft.filter((c) => !rowLocked(c.id) && before.get(c.id) !== JSON.stringify(c) && kstEpoch(live.date, c.time) <= soon);
+        if (late.length)
+          warnings.push(`지금 시각이 지났거나 곧 다가오는 방송은 송출되지 않고 건너뜁니다: ${late.map((c) => `${c.time.slice(0, 5)} ${c.label}`).join(', ')}`);
+      }
+      if (warnings.length && !window.confirm(`확인이 필요합니다:\n\n${warnings.join('\n')}\n\n이대로 저장할까요?`)) return;
       const cues = [...draft].sort((a, b) => a.time.localeCompare(b.time)).map((c) => ({ ...c, official: false }));
-      onProfile(await saveChannel(profile, channel.id, { customCues: cues }));
+      await target.save(cues);
       // 타종 붙인 새 음원으로 바꿔 둔 원본은 저장된 시간표에서 빠졌으니 이제 지운다
-      const ready = [...pendingDelete.current].filter((id) => !cues.some((c) => c.assetId === id) && !usedByOtherChannel(id));
+      const ready = [...pendingDelete.current].filter((id) => !cues.some((c) => c.assetId === id) && !usedElsewhere(id));
       pendingDelete.current.clear();
       const removed = await deleteOriginals(ready);
       if (removed.length) onAssets(assets.filter((a) => !removed.includes(a.id)));
-      setNotice(`저장했습니다. 이제 이 시간표로 방송합니다.${removed.length ? ` 바꿔 둔 원본 음원 ${removed.length}개도 삭제했습니다.` : ''}`);
+      setNotice(`${target.savedNotice}${removed.length ? ` 바꿔 둔 원본 음원 ${removed.length}개도 삭제했습니다.` : ''}`);
     });
-
-  /** 다른 채널(연장 시험실 등) 시간표에서 쓰는 음원 */
-  const usedByOtherChannel = (id: string) => profile.channels.some((ch) => ch.id !== channel.id && ch.customCues?.some((c) => c.assetId === id));
 
   /** 원본 음원 지우기 (목록에서도 뺀다). 지운 id를 돌려준다. 실패한 원본은 남겨 두어 담당자가 목록에서 지울 수 있다 */
   async function deleteOriginals(ids: string[]): Promise<string[]> {
@@ -224,7 +276,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
     else if (items.length) msgs.push(`타종을 붙인 음원 ${items.length}개를 저장했습니다: ${items.map((x) => x.doc.label).join(', ')}.`);
     if (removeOriginals) {
       const withFrom = items.filter((x) => x.from && x.from !== x.asset.id);
-      const swaps = withFrom.filter((x) => !usedByOtherChannel(x.from!));
+      const swaps = withFrom.filter((x) => !usedElsewhere(x.from!));
       const kept = withFrom.length - swaps.length;
       // 편집 중인 시간표에서 원본을 쓰던 자리는 새 음원으로 바꾼다
       const swapOf = new Map(swaps.map((x) => [x.from!, x.asset.id]));
@@ -238,7 +290,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
       if (removed.length) msgs.push(`원본 ${removed.length}개를 삭제했습니다.`);
       if (swappedInDraft) msgs.push('시간표에서 원본을 쓰던 자리는 새 음원으로 바꿨습니다.');
       if (later.length) msgs.push(`원본 ${later.length}개는 지금 방송하는 시간표에서 쓰고 있어, 아래 시간표를 [저장]하면 삭제됩니다.`);
-      if (kept) msgs.push(`원본 ${kept}개는 다른 채널 시간표에서 쓰고 있어 남겨 두었습니다.`);
+      if (kept) msgs.push(`원본 ${kept}개는 다른 시간표(다른 채널·시험)에서 쓰고 있어 남겨 두었습니다.`);
     } else if (items.length) msgs.push('새 음원을 골라 두었습니다. [📋 시간표에 적용]을 누르면 원래 음원 자리에 연결됩니다.');
     onAssets(nextAssets);
     setNotice(msgs.join(' ') || null);
@@ -277,7 +329,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
         continue;
       }
       const hit = new Set(rows.map((c) => c.id));
-      next = next.map((c) => (hit.has(c.id) ? { ...c, assetId: id } : c));
+      next = next.map((c) => (hit.has(c.id) && !rowLocked(c.id) ? { ...c, assetId: id } : c));
       done.push(`${d.label} → ${rows.map((c) => c.time.slice(0, 5)).join(', ')}`);
     }
     setDraft(next);
@@ -291,10 +343,11 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
   }
 
   const revert = () => {
+    if (!target.revert) return;
     if (!window.confirm('학교 시간표를 지우고 평가원 시간표로 되돌릴까요? 만든 시간표는 복구할 수 없습니다 (올린 음원은 남습니다).'))
       return;
     void run('revert', async () => {
-      onProfile(await saveChannel(profile, channel.id, { customCues: undefined }));
+      await target.revert!();
       setDraft(null);
       setNotice('평가원 시간표로 되돌렸습니다.');
     });
@@ -314,7 +367,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
         const cue = time ? draft?.find((c) => c.time === time) : undefined;
         const label = files.length === 1 && uploadLabel.trim() ? uploadLabel : cue && time ? `${time.slice(0, 5)} ${cue.label}` : '';
         try {
-          uploaded.push({ ...(await uploadSchoolAudio(neisCode, file, label)), time });
+          uploaded.push({ ...(await uploadSchoolAudio(neisCode, file, label, { examId: target.examId })), time });
         } catch (e) {
           failed.push(`${file.name}: ${e instanceof Error ? e.message : String(e)}`);
         }
@@ -326,8 +379,9 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
       // 시각이 맞는 줄에 연결 (같은 시각 파일이 여럿이면 나중 것)
       const byTime = new Map<string, string>();
       for (const u of uploaded) if (u.time) byTime.set(u.time, u.asset.id);
-      const linkedTimes = draft ? [...byTime.keys()].filter((t) => draft.some((c) => c.time === t)) : [];
-      if (linkedTimes.length) setDraft((d) => d && d.map((c) => (byTime.has(c.time) ? { ...c, assetId: byTime.get(c.time)! } : c)));
+      const linkedTimes = draft ? [...byTime.keys()].filter((t) => draft.some((c) => c.time === t && !rowLocked(c.id))) : [];
+      if (linkedTimes.length)
+        setDraft((d) => d && d.map((c) => (byTime.has(c.time) && !rowLocked(c.id) ? { ...c, assetId: byTime.get(c.time)! } : c)));
       const parts: string[] = [];
       if (uploaded.length === 1 && !draft) parts.push(`"${uploaded[0].doc.label}" 음원을 올렸습니다 (${formatDuration(uploaded[0].doc.durationMs / 1000)}).`);
       else if (uploaded.length) parts.push(`음원 ${uploaded.length}개를 올렸습니다.`);
@@ -369,13 +423,16 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
     });
 
   const importButton = () => (
-    <label className={`button ${disabled ? 'disabled' : ''}`} title="교시 · 구분 · 타종시간 머리글이 있는 엑셀(.xlsx)">
+    <label
+      className={`button ${disabled || live ? 'disabled' : ''}`}
+      title={live ? '방송 중에는 시간표 전체를 바꿀 수 없습니다' : '교시 · 구분 · 타종시간 머리글이 있는 엑셀(.xlsx)'}
+    >
       {busy === 'import' ? '가져오는 중…' : '📄 엑셀에서 가져오기'}
       <input
         type="file"
         accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         hidden
-        disabled={disabled}
+        disabled={disabled || !!live}
         onChange={(e) => {
           const f = e.target.files?.[0];
           e.target.value = '';
@@ -449,6 +506,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
   }
 
   const disabled = locked || busy !== null;
+  const disabledAll = disabled;
   /** 지금 목록에 있는 음원 중 고른 수 (삭제된 음원은 빼고 센다) */
   const selectedCount = docs.filter(([id]) => selected.has(id)).length;
 
@@ -457,7 +515,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
       <section className="card">
         <div className="asset-head">
           <h2>
-            학교 음원 {docs.length > 0 && <span className="muted small">{docs.length}개{selectedCount ? ` · ${selectedCount}개 선택` : ''}</span>}
+            {target.examId ? '시험 음원' : '학교 음원'} {docs.length > 0 && <span className="muted small">{docs.length}개{selectedCount ? ` · ${selectedCount}개 선택` : ''}</span>}
           </h2>
           {docs.length > 0 && (
             <button className="link" onClick={() => setAssetsFolded((f) => !f)}>
@@ -496,7 +554,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
           </label>
           <button
             onClick={() => setComposing(sortedDocs.map(([id]) => id).filter((id) => selected.has(id)))}
-            disabled={disabled || composing !== null}
+            disabled={disabled || audioBusy || composing !== null}
             title="목록에서 음원을 고르고 누르면 고른 음원에 타종을 붙입니다 (여러 개면 일괄)"
           >
             {selectedCount > 1
@@ -524,11 +582,12 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
             </button>
           )}
         </div>
-        {composing && !locked && (
+        {composing && !locked && !audioBusy && (
           <AudioComposer
             key={composing.join(',')}
             neisCode={neisCode}
-            assets={assets}
+            examId={target.examId}
+            assets={[...builtinAssets, ...schoolAssets]}
             targets={composing}
             onClose={() => setComposing(null)}
             onSaved={(items, failed, removeOriginals) => void afterCompose(items, failed, removeOriginals)}
@@ -576,7 +635,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
                     <td className="mono">{formatDuration(d.durationMs / 1000)}</td>
                     <td className="muted small">{usage(id) ? `시간표 ${usage(id)}곳` : '사용 안 함'}</td>
                     <td className="actions">
-                      <button onClick={() => void preview(id)} disabled={locked}>
+                      <button onClick={() => void preview(id)} disabled={audioBusy}>
                         {previewId === id ? '■ 정지' : '▶ 듣기'}
                       </button>
                       <button
@@ -597,14 +656,15 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
 
       <section className="card timetable-card">
         <div className="timetable-head">
-          <h2>{saved ? '학교 시간표' : '시간표 편집'}</h2>
-          <span className="muted small">
-            {saved
-              ? '이 시험장은 평가원 유형 대신 학교가 만든 시간표로 방송합니다.'
-              : `지금은 평가원 시간표(${template?.name ?? '미지정'})로 방송합니다.`}
-          </span>
+          <h2>{target.title}</h2>
+          <span className="muted small">{target.status}</span>
         </div>
         {locked && <div className="banner warn">자동 방송 중에는 시간표를 고칠 수 없습니다. 방송을 중지한 뒤 고치세요.</div>}
+        {live && (
+          <div className="banner warn">
+            지금 이 시간표로 방송 중입니다. 아직 나가지 않은 방송만 고칠 수 있고, [저장]하면 바로 반영됩니다. 이미 나갔거나 나가는 중인 줄(회색)은 바뀌지 않습니다.
+          </div>
+        )}
         {!locked && othersArmed.length > 0 && (
           <div className="banner warn">
             이 채널은 다른 PC({othersArmed.join(', ')})에서 자동 방송 중입니다. 여기서 저장해도 그 PC의 진행 중인 방송에는 반영되지 않고,
@@ -626,14 +686,13 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
 
         {draft === null ? (
           <div className="edit-start">
-            <p>
-              운영 시간이나 안내 내용이 평가원 시간표와 다른 시험장(경증 시각장애 시험장 등)은 시간표를 직접 만들어 방송할 수 있습니다.
-              저장하기 전에는 방송에 반영되지 않습니다.
-            </p>
+            <p>{target.intro}</p>
             <div className="row">
-              <button className="primary" onClick={startFromTemplate} disabled={disabled || !template}>
-                평가원 시간표 복사해서 시작
-              </button>
+              {template && (
+                <button className="primary" onClick={startFromTemplate} disabled={disabled}>
+                  평가원 시간표 복사해서 시작
+                </button>
+              )}
               <button onClick={startEmpty} disabled={disabled}>
                 빈 시간표로 시작
               </button>
@@ -656,16 +715,16 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
                   </tr>
                 </thead>
                 <tbody>
-                  {draft.map((c) => (
-                    <tr key={c.id} className={c.assetId ? '' : 'no-audio'}>
+                  {draft.map((c) => {
+                    const disabled = disabledAll || rowLocked(c.id);
+                    return (
+                    <tr
+                      key={c.id}
+                      className={rowLocked(c.id) ? 'row-locked' : c.assetId ? '' : 'no-audio'}
+                      title={rowLocked(c.id) ? '이미 나갔거나 나가는 중인 방송이라 고칠 수 없습니다' : undefined}
+                    >
                       <td>
-                        <input
-                          type="time"
-                          step={1}
-                          value={c.time}
-                          disabled={disabled}
-                          onChange={(e) => e.target.value && update(c.id, { time: normTime(e.target.value) })}
-                        />
+                        <TimeInput value={c.time} disabled={disabled} onChange={(v) => update(c.id, { time: normTime(v) })} />
                       </td>
                       <td>
                         <input
@@ -713,17 +772,19 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
                                 ))}
                               </optgroup>
                             )}
-                            <optgroup label="평가원 음원">
-                              {builtinAssets.map((a) => (
-                                <option key={a.id} value={a.id}>
-                                  {a.label}
-                                </option>
-                              ))}
-                            </optgroup>
+                            {builtinAssets.length > 0 && (
+                              <optgroup label="평가원 음원">
+                                {builtinAssets.map((a) => (
+                                  <option key={a.id} value={a.id}>
+                                    {a.label}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
                           </select>
                           <button
                             className="icon"
-                            disabled={locked || !c.assetId || !assetIds.has(c.assetId)}
+                            disabled={audioBusy || !c.assetId || !assetIds.has(c.assetId)}
                             onClick={() => void preview(c.assetId)}
                             title="미리 듣기"
                           >
@@ -769,7 +830,15 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
+                  {draft.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="muted">
+                        아직 방송이 없습니다. [＋ 방송 추가]로 한 줄씩 넣거나 [📄 엑셀에서 가져오기]를 쓰세요.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
               <datalist id="edit-periods">
@@ -782,8 +851,8 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
               <ul className="edit-issues">
                 {/* 음원 없는 줄은 한 줄로 묶는다 (엑셀로 가져온 직후 수십 줄이 표를 밀어내지 않게). 표에서 빨간 줄로 보인다 */}
                 {missingAudio.length > 0 && (
-                  <li className="bad">
-                    음원이 없는 방송 {missingAudio.length}곳 (표의 빨간 줄): {missingAudio.map((c) => c.time.slice(0, 5)).join(', ')}
+                  <li className={target.allowMissingAudio ? "warn" : "bad"}>
+                    음원이 없는 방송 {missingAudio.length}곳 (표의 빨간 줄{target.allowMissingAudio ? " — 연결 전까지 송출되지 않음" : ""}): {missingAudio.map((c) => c.time.slice(0, 5)).join(', ')}
                   </li>
                 )}
                 {check.errors
@@ -793,7 +862,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
                       {e}
                     </li>
                   ))}
-                {check.warnings.map((w) => (
+                {check.warnings.filter((w) => !/^음원이 없는 방송/.test(w)).map((w) => (
                   <li key={w} className="warn">
                     {w}
                   </li>
@@ -806,7 +875,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
               </button>
               {importButton()}
               <span className="spacer" />
-              {saved && (
+              {saved && target.revert && (
                 <button className="link danger-text" onClick={revert} disabled={disabled}>
                   평가원 시간표로 되돌리기
                 </button>
@@ -826,7 +895,7 @@ export default function ScheduleEditor({ neisCode, profile, channel, template, a
               </button>
             </div>
             <p className="muted small">
-              저장하면 시각순으로 정렬됩니다. "시험 시작"(본령)이 늦게 울리면 다음 "시험 종료"(종료령)까지 같은 만큼 늦춰 시험 시간을
+              저장하면 시각순으로 정렬됩니다.{target.allowMissingAudio && ' 음원이 없는 줄도 저장할 수 있지만, 음원을 연결하기 전까지는 송출되지 않습니다.'} "시험 시작"(본령)이 늦게 울리면 다음 "시험 종료"(종료령)까지 같은 만큼 늦춰 시험 시간을
               보장합니다.
             </p>
           </>

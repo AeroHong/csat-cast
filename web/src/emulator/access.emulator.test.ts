@@ -198,6 +198,21 @@ describe.skipIf(!ON)('사용 신청·승인과 권한 규칙 (에뮬레이터)',
     await denied(deleteDoc(doc(teacher.db, 'runReports', 'd13-01_main_r1')));
   });
 
+  it('외부 시험 방송: 자기 학교 것만 읽고 쓰고 지울 수 있고, 형식이 틀리면 거부', async () => {
+    const exam = { id: 'x1', name: '3월 학평', date: '2027-03-25', channelId: 'main', cues: [], updatedAt: 1 };
+    await setDoc(doc(teacher.db, 'schools', 'd13-01', 'exams', 'x1'), exam);
+    expect((await getDoc(doc(teacher.db, 'schools', 'd13-01', 'exams', 'x1'))).data()?.name).toBe('3월 학평');
+    // 문서 id와 내용 id가 다르거나 모르는 필드가 있으면 거부
+    await denied(setDoc(doc(teacher.db, 'schools', 'd13-01', 'exams', 'x2'), exam));
+    await denied(setDoc(doc(teacher.db, 'schools', 'd13-01', 'exams', 'x1'), { ...exam, role: 'admin' }));
+    // 다른 학교는 막힘, 관리자는 읽기 가능
+    await denied(setDoc(doc(teacher.db, 'schools', 'd13-20', 'exams', 'x1'), exam));
+    await denied(getDocs(collection(teacher.db, 'schools', 'd13-20', 'exams')));
+    expect((await getDoc(doc(admin.db, 'schools', 'd13-01', 'exams', 'x1'))).exists()).toBe(true);
+    const { deleteDoc } = await import('firebase/firestore');
+    await deleteDoc(doc(teacher.db, 'schools', 'd13-01', 'exams', 'x1'));
+  });
+
   it('감사 기록은 Functions만 쓰고 관리자만 읽는다', async () => {
     await denied(addDoc(collection(teacher.db, 'auditLogs'), { action: 'approve' }));
     await denied(getDocs(collection(teacher.db, 'auditLogs')));

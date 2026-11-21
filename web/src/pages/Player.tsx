@@ -1,11 +1,12 @@
 import CampaignIcon from '@mui/icons-material/CampaignOutlined';
 import EditCalendarIcon from '@mui/icons-material/EditCalendarOutlined';
+import EventNoteIcon from '@mui/icons-material/EventNoteOutlined';
 import ScienceIcon from '@mui/icons-material/ScienceOutlined';
 import { Chip, MenuItem, TextField, Typography } from '@mui/material';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import AppShell, { type NavItem } from '../components/AppShell';
 import { useSearchParams } from 'react-router-dom';
-import { audioEngine, type LoadResult } from '../core/audio';
+import { AUDIO_CACHE, audioEngine, type LoadResult } from '../core/audio';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { defaultProfile } from '../core/catalog';
 import { fb, usingEmulator } from '../core/firebase';
@@ -24,18 +25,32 @@ import { HEARTBEAT_MS, Reporter } from '../core/reporter';
 import { describeRehearsal, loadRehearsals, rehearsalPlan, saveRehearsals, type ScheduledRehearsal } from '../core/rehearsals';
 import { loadRun, saveRun } from '../core/runStore';
 import { buildPlan, kstDate, kstEpoch, kstTime, resolveCues, shiftPlan, type CueState } from '../core/scheduler';
-import type { Asset, GlobalConfig, SchoolProfile, Template } from '../core/types';
+import type { Asset, Exam, GlobalConfig, SchoolProfile, Template } from '../core/types';
+import { subscribeExams } from '../core/exams';
+import { saveChannel } from '../core/schoolSchedule';
 import { onUpdatePending } from '../core/updates';
 import { useSession } from '../session';
 import NowPlayingDetail, { formatDuration, useNowPlaying } from './NowPlaying';
 import RehearsalScheduler, { shortDate } from './RehearsalScheduler';
 import ScheduleEditor from './ScheduleEditor';
+import ExamEditor from './ExamEditor';
+import ExamList from './ExamList';
 import RunReports from './RunReports';
 import { clearReports, incidentsFrom, loadReports, outcomesFrom, saveReport, uploadReport, type RunReport } from '../core/runReports';
 import { LOW_BATTERY, powerText, usePower } from '../core/power';
 import { useAudioOutput } from '../core/audioOutput';
 
 const RESYNC_MS = 10 * 60_000;
+
+/** 브라우저 캐시에 남은 평가원 음원 지우기 (학교 음원은 그대로) */
+async function clearBuiltinAudioCache() {
+  try {
+    const cache = await caches.open(AUDIO_CACHE);
+    for (const req of await cache.keys()) if (new URL(req.url).pathname.startsWith('/audio/builtin/')) await cache.delete(req);
+  } catch {
+    /* 캐시를 못 써도 방송에는 영향 없음 */
+  }
+}
 
 const STATE_LABEL: Record<CueState, string> = {
   pending: '대기',
@@ -93,8 +108,17 @@ export default function Player() {
   const [duplicateTab, setDuplicateTab] = useState(false);
   /** 이 PC에 예약된 리허설 (학교·채널별) */
   const [rehearsals, setRehearsals] = useState<ScheduledRehearsal[]>([]);
-  /** 화면 탭: 실전 방송 / 테스트·리허설 / 시간표 편집 */
-  const [tab, setTab] = useState<'live' | 'test' | 'edit'>('live');
+  /** 화면 탭: 실전 방송 / 테스트·리허설 / 시간표 편집 / 시험 방송 */
+  /** 수능: live·test·edit / 시험 방송: exams(목록·편집)·examRun(진행·리허설) */
+  const [tab, setTab] = useState<'live' | 'test' | 'edit' | 'exams' | 'examRun'>('live');
+  /** 지금 자동 방송(실전·리허설)에 쓰고 있는 시험 (수능 시간표면 null) — 방송 중 탭을 옮겨도 시간표가 바뀌지 않게 */
+  const [runExamId, setRunExamId] = useState<string | null>(null);
+  /** 외부 시험 방송 (학교가 만들고 정한 날 자동 방송) */
+  const [exams, setExams] = useState<Exam[]>([]);
+  /** 시험 방송 탭에서 편집 중인 시험 */
+  const [examId, setExamId] = useState<string | null>(null);
+  /** 방송일이 아닐 때 리허설·시간표 보기에 쓸 시험 (비우면 수능 시간표) */
+  const [pickedExamId, setPickedExamId] = useState<string>('');
   /** 서버에 저장된 최신 학교 설정 (다른 PC에서 바꾼 것을 알아채기 위함) */
   const [remoteProfile, setRemoteProfile] = useState<SchoolProfile | null>(null);
   const [remoteNote, setRemoteNote] = useState<string | null>(null);
@@ -107,16 +131,34 @@ export default function Player() {
   const channel = profile?.channels.find((c) => c.id === channelId) ?? profile?.channels[0];
   const template = templates.find((t) => t.id === channel?.templateId);
   /** 같은 채널 화면을 연 다른 PC (같은 학교의 다른 담당자 등) */
-  const otherDevices = devicesOpen(Object.fromEntries(Object.entries(devices).filter(([id]) => id !== deviceId())));
+  const otherDevices = devicesOpen(Object.fromEntries(Object.entries(devices).filter(([id]) => id !== deviceId())), now);
   /** 서버의 학교 설정이 이 PC가 쓰는 것과 다름 (다른 PC에서 시간표 저장·관리자 유형 변경) */
   const remoteChanged =
     !!remoteProfile && !!profile && stableJson(remoteProfile.channels) !== stableJson(profile.channels);
   /** 학교가 직접 만든 시간표로 방송하는가 (평가원 유형 대신) */
   const custom = !!channel?.customCues;
-  const cues = useMemo(() => resolveCues(template, channel), [template, channel]);
-  const planHash = useMemo(() => cuesHash(cues), [cues]);
+  /** 수능 모드 (관리자가 켬). 꺼져 있으면 평가원 시간표·음원·지정 방송일을 쓰지 않고 시험 방송만 한다 */
+  const csatMode = cfg?.csatMode === true;
+  const channelCues = useMemo(() => (csatMode ? resolveCues(template, channel) : []), [csatMode, template, channel]);
 
   const today = kstDate(now);
+  // 자동 방송하는 날: 교육지원청 지정일(실전·공식 리허설)이 우선, 그다음 학교의 시험 방송, 그다음 학교가 예약한 리허설
+  const officialToday = csatMode ? cfg?.armedDates.find((d) => d.date === today) : undefined;
+  const examToday = officialToday || !channel ? undefined : exams.find((e) => e.date === today && e.channelId === channel.id);
+  const channelExams = exams.filter((e) => e.channelId === channel?.id);
+  /** 수능 모드가 꺼져 있으면 따로 고르지 않아도 가장 가까운 시험(없으면 가장 최근 시험)을 보여 준다 */
+  /** 시험 방송 메뉴에서 볼 시험: 고른 시험, 없으면 가장 가까운 시험(없으면 가장 최근 시험) */
+  const pickedExam = channelExams.find((e) => e.id === pickedExamId) ?? channelExams.find((e) => e.date >= today) ?? channelExams.at(-1);
+  const examSection = tab === 'exams' || tab === 'examRun';
+  /** 지금 이 화면이 다루는 시간표: 오늘 시험 방송 > 수능 방송일 > (평소) 고른 시험 또는 수능 시간표 */
+  const activeExam = snap.armed
+    ? runExamId
+      ? exams.find((e) => e.id === runExamId)
+      : undefined
+    : (examToday ?? (officialToday || !examSection ? undefined : pickedExam));
+  const cues = activeExam ? activeExam.cues : channelCues;
+  const planHash = useMemo(() => cuesHash(cues), [cues]);
+
   const nowPlaying = useNowPlaying();
   const tableScrollRef = useRef<HTMLDivElement>(null);
   /** 실제 시간표 기준 각 큐의 시작 시각과 다음 큐 시작 시각 (리허설 배속과 무관하게 겹침 판단) */
@@ -126,42 +168,60 @@ export default function Player() {
   }, [cues, today]);
   // 개발 서버 전용: ?devArmed=1 이면 오늘을 방송일로 가정하고 시간표를 '곧 시작, 60배속'으로 당겨 자동 시작·이어하기를 시험
   const devArmed = import.meta.env.DEV && params.get('devArmed') === '1';
-  // 자동 방송하는 날: 교육지원청 지정일(실전·공식 리허설)이 우선, 그다음 학교가 예약한 리허설
-  const officialToday = cfg?.armedDates.find((d) => d.date === today);
-  const rehearsalToday = officialToday ? undefined : rehearsals.find((r) => r.date === today);
+  const rehearsalToday = officialToday || examToday ? undefined : rehearsals.find((r) => r.date === today);
   const armedToday =
     officialToday ??
+    (examToday ? { date: today, mode: 'live' as const, label: `시험 방송 · ${examToday.name}` } : undefined) ??
     (rehearsalToday ? { date: today, mode: 'test' as const, label: `예약 리허설 · ${describeRehearsal(rehearsalToday)}` } : undefined) ??
     (devArmed ? { date: today, mode: 'test' as const, label: '[개발] 방송일 시뮬레이션' } : undefined);
   const todayPlan = () =>
-    officialToday
+    officialToday || examToday
       ? buildPlan(cues, today)
       : rehearsalToday
         ? rehearsalPlan(cues, rehearsalToday)
         : devArmed
           ? shiftPlan(buildPlan(cues, today), devStartAt(), 60)
           : buildPlan(cues, today);
-  const liveDay = cfg?.armedDates.some((d) => d.date === today && d.mode === 'live') ?? false;
+  const csatLiveDay = (csatMode && cfg?.armedDates.some((d) => d.date === today && d.mode === 'live')) ?? false;
   const inLockWindow =
-    liveDay && cfg != null && now >= kstEpoch(today, cfg.liveLockWindow.start) && now <= kstEpoch(today, cfg.liveLockWindow.end);
-  const nextArmed = cfg?.armedDates
+    csatLiveDay &&
+    cfg != null && now >= kstEpoch(today, cfg.liveLockWindow.start) && now <= kstEpoch(today, cfg.liveLockWindow.end);
+  const nextArmed = (csatMode ? (cfg?.armedDates ?? []) : [])
     .filter((d) => d.date > today)
     .sort((a, b) => a.date.localeCompare(b.date))[0];
   const soundKey = channel ? `csat-cast:sound:${neisCode}:${channel.id}:${today}` : null;
+  const nextExam = channel ? exams.find((e) => e.date > today && e.channelId === channel.id) : undefined;
+  const assetIds = useMemo(() => new Set(assets.map((a) => a.id)), [assets]);
+  /** 음원을 아직 고르지 않은 방송 (시험 방송은 음원 없이 저장할 수 있다) */
+  const missingAudio = cues.filter((c) => !c.assetId || !assetIds.has(c.assetId));
+  /** 음원 삭제 금지 판단: 이 대상 밖에서 그 음원을 쓰는가 */
+  const usedOutside = (assetId: string, except: { channel?: string; exam?: string }) =>
+    (profile?.channels ?? []).some((ch) => ch.id !== except.channel && ch.customCues?.some((c) => c.assetId === assetId)) ||
+    exams.some((e) => e.id !== except.exam && e.cues.some((c) => c.assetId === assetId));
+
+  // 시험 방송 목록 구독 (다른 PC에서 고친 내용도 바로 들어온다)
+  useEffect(() => subscribeExams(neisCode, setExams), [neisCode]);
 
   // 1) 학교 설정·시간표·음원 목록 불러오기 + 시각 동기화 + 클릭 없이 소리 켜기 시도
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [p, t, b, s, g] = await Promise.all([
+      const g = await loadGlobalConfig();
+      const [p, t, b, s] = await Promise.all([
         loadSchool(neisCode),
         loadTemplates(),
+        // 수능 모드가 꺼져 있으면 평가원 음원 목록을 쓰지 않는다 (받지도 않음).
         // 에뮬레이터 시험 중에는 Storage 대신 개발 PC의 음원을 쓴다
-        loadBuiltinAssets(neisCode !== 'LOCAL' && !usingEmulator).catch(() => []),
+        g.csatMode ? loadBuiltinAssets(neisCode !== 'LOCAL' && !usingEmulator).catch(() => []) : Promise.resolve([] as Asset[]),
         loadSchoolAssets(neisCode),
-        loadGlobalConfig(),
       ]);
       if (cancelled) return;
+      // 수능 기간이 아니면 처음 화면은 시험 방송 (오늘 시험이 있으면 자동으로 실전 탭으로 넘어간다)
+      if (!g.csatMode) {
+        setTab((cur) => (cur === 'live' ? 'exams' : cur));
+        // 수능 때 이 PC에 받아 둔 평가원 음원(약 90MB)은 지운다 (다음 수능 때 새로 받음)
+        void clearBuiltinAudioCache();
+      }
       setProfile(p);
       setTemplates(t);
       setAssets([...b, ...s]);
@@ -199,12 +259,17 @@ export default function Player() {
   // 2) 이 채널에 필요한 음원을 모두 내려받아 메모리에 올림
   useEffect(() => {
     if (cues.length === 0 || assets.length === 0) return;
-    const needed = new Set(cues.map((c) => c.assetId));
+    // 음원을 아직 고르지 않은 줄(시험 방송)은 '음원 없는 방송'으로 따로 알린다
+    const needed = new Set(cues.map((c) => c.assetId).filter(Boolean));
     const list = assets.filter((a) => needed.has(a.id));
     const missing = [...needed].filter((id) => !assets.some((a) => a.id === id));
     let cancelled = false;
-    setLoadResult(null);
-    setVerify(null);
+    // 방송 중 시간표를 고치면(시험 방송) 새로 필요한 음원만 더 받는다. 이미 받은 음원은 다시 받지 않으므로
+    // 진행 중 방송이 '준비 중'으로 흔들리지 않게 결과를 비우지 않는다
+    if (!player.armed) {
+      setLoadResult(null);
+      setVerify(null);
+    }
     void (async () => {
       const r = await audioEngine.load(list, (d, t) => setProgress([d, t]));
       if (cancelled) return;
@@ -276,7 +341,7 @@ export default function Player() {
     const u = session.user;
     const pr = u ? startPresence(neisCode, channel.id, { uid: u.uid, email: u.email ?? '', name: u.displayName ?? '' }) : null;
     presenceRef.current = pr;
-    const unwatch = watchPresence(neisCode, channel.id, setDevices);
+    const unwatch = watchPresence(neisCode, channel.id, setDevices, () => serverClock.now());
     return () => {
       r.stop();
       pr?.stop();
@@ -355,7 +420,8 @@ export default function Player() {
     if (!fullyVisible) box.scrollTo({ top: Math.max(0, top - box.clientHeight / 4), behavior: 'smooth' });
   }, [focusCueId]);
   // 오늘 자동 방송의 정체 (같은 날 다른 방송의 이어하기 기록을 이어받지 않도록 기록에 함께 저장)
-  const planKey = armedToday ? `${armedToday.mode}|${armedToday.label}` : undefined;
+  // 시험 방송은 시험 id로만 구분한다 (방송 중 시간표·이름을 고쳐도 새로고침 이어하기가 그대로 이어지게)
+  const planKey = examToday ? `exam:${examToday.id}` : armedToday ? `${armedToday.mode}|${armedToday.label}` : undefined;
   /** 지금 진행 중인 날짜 자동 방송의 planKey (기록 저장용) */
   const runKeyRef = useRef<string | undefined>(undefined);
   const savedRun = channel ? loadRun(neisCode, channel.id, today, planKey) : null;
@@ -369,6 +435,7 @@ export default function Player() {
     // 방송일 화면에서는 리허설을 시작할 수 없으므로, 돌고 있는 리허설은 전날 켜 둔 것 → 실제 방송으로 교체
     const saved = loadRun(neisCode, channel.id, today, planKey);
     runKeyRef.current = planKey;
+    setRunExamId(examToday?.id ?? null);
     player.arm(todayPlan(), armedToday.mode, {
       restore: saved?.states,
       starts: saved?.starts,
@@ -378,6 +445,21 @@ export default function Player() {
     });
   }, [armedToday?.date, armedToday?.label, channel, loaded, cues, duplicateTab, runningToday, stoppedToday, neisCode, today]);
 
+  // 시험 방송 중 시간표를 고치면(이 PC·다른 PC 모두) 아직 나가지 않은 방송에 바로 반영
+  const examCuesKey = examToday ? JSON.stringify(examToday.cues) : '';
+  useEffect(() => {
+    if (!examToday || !snap.armed || snap.runDate !== today || runKeyRef.current !== `exam:${examToday.id}`) return;
+    const r = player.replan(buildPlan(examToday.cues, today));
+    if (!r) return;
+    const parts = [r.changed && `변경 ${r.changed}`, r.added && `추가 ${r.added}`, r.removed && `삭제 ${r.removed}`].filter(Boolean);
+    setRemoteNote(
+      parts.length
+        ? `시험 시간표 변경(${parts.join(' · ')})을 진행 중인 방송에 반영했습니다 (${kstTime(serverClock.now())}).` +
+            (r.ignored ? ` 이미 나갔거나 나가는 중인 방송 ${r.ignored}개는 그대로입니다.` : '')
+        : `이미 나갔거나 나가는 중인 방송 ${r.ignored}개는 바꿀 수 없어 그대로 둡니다.`,
+    );
+  }, [examCuesKey]);
+
   // 이 PC에 저장된 리허설 예약 불러오기
   useEffect(() => {
     if (channel) setRehearsals(loadRehearsals(neisCode, channel.id));
@@ -385,8 +467,11 @@ export default function Player() {
 
   // 방송이 시작되면 그 종류에 맞는 탭으로 (테스트 방송 → 테스트 탭, 실전 → 실전 탭)
   useEffect(() => {
-    if (snap.armed && snap.mode !== 'idle') setTab(snap.mode);
-  }, [snap.armed, snap.mode]);
+    if (snap.armed && snap.mode !== 'idle') setTab(runExamId ? 'examRun' : snap.mode);
+  }, [snap.armed, snap.mode, runExamId]);
+  useEffect(() => {
+    if (!snap.armed) setRunExamId(null);
+  }, [snap.armed]);
 
   // 8) 진행 상태를 PC에 저장 (새로고침·재시작 후 이어하기)
   useEffect(() => {
@@ -440,6 +525,7 @@ export default function Player() {
         operator: session.operator,
         deviceId: deviceId(),
         planHash,
+        exam: activeExam ? { id: activeExam.id, name: activeExam.name } : null,
         runDate: s.runDate,
         wakeLock,
         hidden,
@@ -450,7 +536,7 @@ export default function Player() {
     send();
     const id = setInterval(send, HEARTBEAT_MS);
     return () => clearInterval(id);
-  }, [profile, channel, assetsReady, loadResult, unlocked, autoplayAllowed, sound, snap.armed, snap.mode, snap.alarms.length, next?.cue.id, clock.synced, clock.source, planHash, wakeLock, hidden, output.status.level, output.choice?.deviceId, power.charging, power.level !== null && power.level < LOW_BATTERY]);
+  }, [profile, channel, assetsReady, loadResult, unlocked, autoplayAllowed, sound, snap.armed, snap.mode, snap.alarms.length, next?.cue.id, clock.synced, clock.source, planHash, activeExam?.id, activeExam?.name, wakeLock, hidden, output.status.level, output.choice?.deviceId, power.charging, power.level !== null && power.level < LOW_BATTERY]);
 
   // 10-1) 방송별 진행 상태를 보고 (관리자 화면의 학교 × 방송 표). 바뀔 때만 보낸다.
   const timelineSent = useRef('');
@@ -605,6 +691,7 @@ export default function Player() {
     if (!armedToday || !channel) return;
     void unlockAudio();
     runKeyRef.current = planKey;
+    setRunExamId(examToday?.id ?? null);
     player.arm(todayPlan(), armedToday.mode, {
       restore: savedRun?.states,
       starts: savedRun?.starts,
@@ -645,7 +732,9 @@ export default function Player() {
   async function startRehearsal(realTime: boolean) {
     await unlockAudio();
     const base = buildPlan(cues, today);
-    runLabelRef.current = realTime ? '오늘 실제 시각으로 테스트' : `바로 리허설 ${speed}배속`;
+    const what = activeExam ? `${activeExam.name} · ` : '';
+    runLabelRef.current = what + (realTime ? '오늘 실제 시각으로 테스트' : `바로 리허설 ${speed}배속`);
+    setRunExamId(activeExam?.id ?? null);
     player.arm(realTime ? base : shiftPlan(base, serverClock.now() + delaySec * 1000, speed), 'test');
   }
 
@@ -676,9 +765,10 @@ export default function Player() {
     armedTodayLabel: armedToday?.label,
     stoppedToday,
     next: next ? `${kstTime(next.at)} ${next.cue.label}` : null,
+    empty: cues.length === 0,
   });
 
-  const nextLive = cfg.armedDates
+  const nextLive = (csatMode ? cfg.armedDates : [])
     .filter((d) => d.mode === 'live' && d.date >= today)
     .sort((a, b) => a.date.localeCompare(b.date))[0];
   const upcomingRehearsals = rehearsals.filter((r) => r.date >= today).length;
@@ -729,8 +819,21 @@ export default function Player() {
           : verifying
             ? `${loadResult.loaded.length}개 내려받음 · 파일 확인 중 ${Array.isArray(verify) ? `${verify[0]}/${verify[1]}` : ''}`
             : `${loadResult.loaded.length}개 모두 준비됨 (인터넷이 끊겨도 재생 가능)`
-        : `내려받는 중 ${progress[0]}/${progress[1]}`,
+        : cues.length === 0
+          ? '방송할 시간표가 비어 있음'
+          : `내려받는 중 ${progress[0]}/${progress[1]}`,
     },
+    ...(missingAudio.length
+      ? [
+          {
+            ok: false,
+            label: '음원 없는 방송',
+            detail: `${missingAudio.length}곳은 음원을 고르지 않아 송출되지 않습니다 (시험 방송 탭에서 음원 연결): ${missingAudio
+              .map((c) => `${c.time.slice(0, 5)} ${c.label}`)
+              .join(', ')}`,
+          },
+        ]
+      : []),
     {
       ok: clockUsable,
       warn: osDriftWarn || (clockUsable && !clock.synced),
@@ -784,19 +887,22 @@ export default function Player() {
     },
   ];
 
-  const nav: NavItem<typeof tab>[] = [
+  const runningExam = snap.armed && !!runExamId;
+  const csatNav: NavItem<typeof tab>[] = [
     {
       key: 'live',
+      group: '수능 방송',
       label: '실전 방송',
       icon: <CampaignIcon fontSize="small" />,
-      badge: liveDay ? { label: '오늘', color: 'error' } : undefined,
+      badge: csatLiveDay ? { label: '오늘', color: 'error' } : undefined,
     },
     {
       key: 'test',
+      group: '수능 방송',
       label: '테스트 · 리허설',
       icon: <ScienceIcon fontSize="small" />,
       badge:
-        snap.armed && snap.mode === 'test'
+        snap.armed && snap.mode === 'test' && !runningExam
           ? { label: '진행 중', color: 'warning' }
           : upcomingRehearsals > 0
             ? { label: `예약 ${upcomingRehearsals}` }
@@ -804,11 +910,43 @@ export default function Player() {
     },
     {
       key: 'edit',
+      group: '수능 방송',
       label: '시간표 편집',
       icon: <EditCalendarIcon fontSize="small" />,
       badge: custom ? { label: '학교', color: 'primary' } : undefined,
     },
   ];
+  const examNav: NavItem<typeof tab>[] = [
+    {
+      key: 'exams',
+      group: '시험 방송',
+      label: '시험 · 음원 등록',
+      icon: <EventNoteIcon fontSize="small" />,
+      badge: exams.some((e) => e.date > today) ? { label: `예정 ${exams.filter((e) => e.date > today).length}` } : undefined,
+    },
+    {
+      key: 'examRun',
+      group: '시험 방송',
+      label: '방송 진행',
+      icon: <CampaignIcon fontSize="small" />,
+      badge: runningExam
+        ? { label: snap.mode === 'live' ? '방송 중' : '리허설 중', color: snap.mode === 'live' ? 'error' : 'warning' }
+        : examToday
+          ? { label: '오늘', color: 'error' }
+          : undefined,
+    },
+  ];
+  // 수능 모드가 꺼져 있으면 수능 메뉴는 통째로 숨긴다
+  const nav = csatMode ? [...csatNav, ...examNav] : examNav;
+  const editing = tab === 'edit' || tab === 'exams';
+  const editExam = exams.find((e) => e.id === examId);
+  /** 이 시험을 지금 자동 방송 중이면: 이미 나갔거나 나가는 중인 줄은 못 고친다 */
+  const examLive =
+    editExam && snap.armed && snap.runDate === today && examToday?.id === editExam.id && runKeyRef.current === `exam:${editExam.id}`
+      ? { date: today, lockedIds: new Set(Object.entries(snap.states).filter(([, st]) => st !== 'pending').map(([id]) => id)) }
+      : undefined;
+  const runningExamId =
+    snap.armed && snap.runDate === today && examToday && runKeyRef.current === `exam:${examToday.id}` ? examToday.id : null;
 
   return (
     <AppShell<typeof tab>
@@ -839,7 +977,7 @@ export default function Player() {
             <Chip size="small" variant="outlined" label={channel?.label} />
           )}
           <Typography variant="body2" color="text.secondary" noWrap>
-            {custom ? '학교 시간표' : template?.name}
+            {activeExam ? `시험 방송 · ${activeExam.name}` : !csatMode ? '시험 방송' : custom ? '학교 시간표' : template?.name}
           </Typography>
           {session.localMode && <Chip size="small" label="로컬 모드" />}
           {snap.mode !== 'idle' && (
@@ -863,23 +1001,23 @@ export default function Player() {
 
 
       {/* 시간표 편집에서는 상태 요약·시계 대신 편집 영역을 넓게 쓴다 (중요 경고는 위에 그대로) */}
-      <div className={`player-body ${tab === 'edit' ? 'editing' : ''}`}>
+      <div className={`player-body ${tab === 'exams' ? 'exam-edit' : editing ? 'editing' : ''}`}>
         <div className="col-side">
-          {tab !== 'edit' && (
+          {!editing && (
             <div className={`headline ${headline.level}`}>
               <div className="headline-title">{headline.title}</div>
               {headline.detail && <div>{headline.detail}</div>}
             </div>
           )}
 
-          {channel && templates.length > 0 && !template && !custom && (
+          {csatMode && channel && templates.length > 0 && !template && !custom && (
             <div className="banner bad">
               ⛔ 이 시험장에 지정된 시간표({channel.templateId})를 찾을 수 없어 자동 방송을 할 수 없습니다. 교육지원청에 시험장
               유형(안내방송 유형 1~6) 설정을 요청하세요.
               {session.localMode && ' 로컬 모드라면 로그아웃 후 시험장 상황을 다시 골라 시작하세요.'}
             </div>
           )}
-          {template && !custom && !template.verified && (
+          {csatMode && template && !custom && !template.verified && (
             <div className="banner warn">⚠ 이 시간표는 아직 공식 시간표로 검증되지 않은 초안입니다.</div>
           )}
           {session.authLost && (
@@ -888,11 +1026,11 @@ export default function Player() {
               방송이 모두 끝난 뒤 다시 로그인하세요.
             </div>
           )}
-          {devicesConflict(devices).length > 0 ? (
+          {devicesConflict(devices, now).length > 0 ? (
             <div className="banner bad">
               ⛔ 다른 PC에서도 이 방송 채널을 자동 방송 중입니다 (이중 송출 위험). 한 대만 남기고 나머지 PC는 방송을 멈추세요.
               <ul>
-                {devicesConflict(devices).map((d, i) => (
+                {devicesConflict(devices, now).map((d, i) => (
                   <li key={i}>
                     {d.name || d.email || d.uid} · {new Date(d.since).toLocaleTimeString('ko-KR')}부터
                     {Object.entries(devices).find(([, v]) => v === d)?.[0] === deviceId() ? ' (이 PC)' : ''}
@@ -903,9 +1041,19 @@ export default function Player() {
           ) : (
             otherDevices.length > 0 && (
               <div className="banner">
-                다른 PC에서도 이 채널 화면이 열려 있습니다:{' '}
-                {otherDevices.map((d) => `${d.name || d.email || d.uid}${d.armed ? '(자동 방송 중)' : ''}`).join(', ')}. 자동 방송은 한
-                PC에서만 시작하세요.
+                다른 화면에서도 이 채널이 열려 있습니다:{' '}
+                {otherDevices
+                  .map(
+                    (d) =>
+                      `${d.name || d.email || d.uid}` +
+                      (d.host ? ` · ${d.host}` : '') +
+                      ` · ${new Date(d.since).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}부터` +
+                      (d.armed ? ' (자동 방송 중)' : ''),
+                  )
+                  .join(', ')}
+                . 자동 방송은 한 곳에서만 시작하세요.
+                {otherDevices.some((d) => d.uid === session.user?.uid && d.host && d.host !== location.host) &&
+                  ' 같은 계정이 다른 주소(localhost 개발 화면 등)에서 열려 있으면 같은 PC라도 따로 잡힙니다 — 그 탭을 닫으면 사라집니다.'}
               </div>
             )
           )}
@@ -919,7 +1067,26 @@ export default function Player() {
             <div className="banner">새 버전이 준비되어 있습니다. 방송이 끝난 뒤 자동으로 적용됩니다 (방송 중에는 적용하지 않음).</div>
           )}
 
-          {tab !== 'edit' && (
+          {tab === 'exams' && (
+            <ExamList
+              neisCode={neisCode}
+              exams={exams}
+              channels={profile.channels}
+              channelId={channel?.id ?? 'main'}
+              today={today}
+              official={cfg.armedDates}
+              assetIds={assetIds}
+              selectedId={examId}
+              runningId={runningExamId}
+              operator={session.operator}
+              onSelect={(id) => {
+                setExamId(id);
+                if (id) setPickedExamId(id);
+              }}
+            />
+          )}
+
+          {!editing && (
           <section className="clock-panel">
             <div className="clock">{kstTime(now)}</div>
             <div className="muted">
@@ -937,7 +1104,7 @@ export default function Player() {
           </section>
           )}
 
-          {(tab === 'live' || tab === 'test') && (
+          {(tab === 'live' || tab === 'test' || tab === 'examRun') && (
             <section className="card">
               <h2>방송 준비 점검</h2>
               <ul className="checks">
@@ -1065,7 +1232,7 @@ export default function Player() {
             </section>
           )}
 
-          {tab === 'live' && !autoplayAllowed && !session.localMode && (
+          {(tab === 'live' || tab === 'examRun') && !autoplayAllowed && !session.localMode && (
             <section className="card">
               <h2>전용 실행 아이콘 (권장)</h2>
               <p>
@@ -1110,12 +1277,48 @@ export default function Player() {
                   ) : (
                     <p className="muted">예정된 실전 방송일이 없습니다.</p>
                   )}
+                  {examToday && <p className="warn-text">오늘은 시험 방송일입니다 ({examToday.name}) — [시험 방송 › 방송 진행]에서 확인하세요.</p>}
                 </>
               )}
             </section>
           )}
 
-          {tab === 'test' && (
+          {tab === 'examRun' && (
+            <section className="card">
+              {snap.armed && snap.mode === 'live' && runningExam ? (
+                runningControls
+              ) : snap.armed && runningExam ? (
+                <>
+                  <h2>시험 방송</h2>
+                  <p className="muted">지금은 이 시험의 리허설이 진행 중입니다 (아래 리허설 칸에서 멈출 수 있음).</p>
+                </>
+              ) : snap.armed ? (
+                <>
+                  <h2>시험 방송</h2>
+                  <p className="muted">지금은 수능 {snap.mode === 'live' ? '실전 방송' : '테스트'}이 진행 중입니다.</p>
+                </>
+              ) : examToday ? (
+                todayControls
+              ) : (
+                <>
+                  <h2>시험 방송</h2>
+                  {nextExam ? (
+                    <p>
+                      <strong>
+                        {shortDate(nextExam.date)} {nextExam.name}
+                      </strong>{' '}
+                      <span className="tag live">D-{dday(today, nextExam.date)}</span>
+                      <br />그날 이 화면을 열어 두기만 하면 시험 시간표대로 자동으로 방송합니다.
+                    </p>
+                  ) : (
+                    <p className="muted">예정된 시험 방송이 없습니다. [시험 · 음원 등록]에서 시험을 만드세요.</p>
+                  )}
+                </>
+              )}
+            </section>
+          )}
+
+          {(tab === 'test' || tab === 'examRun') && (
             <section className="card">
               {snap.armed && snap.mode === 'test' ? (
                 runningControls
@@ -1129,7 +1332,16 @@ export default function Player() {
               ) : (
                 <>
                   <h2>바로 리허설</h2>
-                  <p className="muted">지금 바로 시간표 전체를 연습합니다. 정해진 날에 하려면 아래 [리허설 예약]을 쓰세요.</p>
+                  <p className="muted">
+                    지금 바로 시간표 전체를 연습합니다. 정해진 날에 하려면 아래 [리허설 예약]을 쓰세요.
+                    {exams.length > 0 && ' 시험 방송을 연습하려면 오른쪽 시간표 제목 옆에서 시험을 고르세요.'}
+                  </p>
+                  <p>
+                    연습할 시간표:{' '}
+                    <strong>
+                      {activeExam ? `시험 · ${activeExam.name}` : !csatMode ? '없음 (시험 방송을 먼저 만드세요)' : custom ? '학교 시간표' : (template?.name ?? '미지정')}
+                    </strong>
+                  </p>
                   <div className="row">
                     <label>
                       시작까지
@@ -1163,10 +1375,11 @@ export default function Player() {
               now={now}
               official={cfg.armedDates}
               runningDate={snap.armed && snap.mode === 'test' ? snap.runDate : null}
+              exams={channel ? exams.filter((e) => e.channelId === channel.id) : []}
             />
           )}
 
-          {tab === 'test' && channel && (
+          {(tab === 'test' || tab === 'examRun') && channel && (
             <RunReports
               reports={reports}
               onClear={() => {
@@ -1177,7 +1390,7 @@ export default function Player() {
             />
           )}
 
-          {tab !== 'edit' && snap.events.length > 0 && (
+          {!editing && snap.events.length > 0 && (
             <section className="card">
               <h2>기록</h2>
               <ul className="events">
@@ -1196,19 +1409,79 @@ export default function Player() {
             <ScheduleEditor
               key={channel.id}
               neisCode={neisCode}
-              profile={profile}
-              channel={channel}
-              template={template}
+              target={{
+                key: channel.id,
+                saved: channel.customCues,
+                save: async (cs) => setProfile(await saveChannel(profile, channel.id, { customCues: cs })),
+                revert: async () => setProfile(await saveChannel(profile, channel.id, { customCues: undefined })),
+                title: channel.customCues ? '학교 시간표' : '시간표 편집',
+                status: channel.customCues
+                  ? '이 시험장은 평가원 유형 대신 학교가 만든 시간표로 방송합니다.'
+                  : `지금은 평가원 시간표(${template?.name ?? '미지정'})로 방송합니다.`,
+                intro:
+                  '운영 시간이나 안내 내용이 평가원 시간표와 다른 시험장(경증 시각장애 시험장 등)은 시간표를 직접 만들어 방송할 수 있습니다. 저장하기 전에는 방송에 반영되지 않습니다.',
+                savedNotice: '저장했습니다. 이제 이 시간표로 방송합니다.',
+                template,
+              }}
               assets={assets}
               locked={snap.armed}
+              audioBusy={snap.armed}
               othersArmed={otherDevices.filter((d) => d.armed).map((d) => d.name || d.email || d.uid)}
-              onProfile={setProfile}
+              usedElsewhere={(id) => usedOutside(id, { channel: channel.id })}
               onAssets={setAssets}
             />
+          ) : tab === 'exams' ? (
+            editExam ? (
+              <ExamEditor
+                key={editExam.id}
+                neisCode={neisCode}
+                exam={editExam}
+                exams={exams}
+                channels={profile.channels}
+                today={today}
+                official={cfg.armedDates}
+                assets={assets}
+                operator={session.operator}
+                live={examLive}
+                audioBusy={snap.armed}
+                usedElsewhere={(id) => usedOutside(id, { exam: editExam.id })}
+                othersArmed={otherDevices.filter((d) => d.armed).map((d) => d.name || d.email || d.uid)}
+                onAssets={setAssets}
+                onSelect={setExamId}
+              />
+            ) : (
+              <section className="card">
+                <h2>시험 방송 만들기</h2>
+                <ol className="help">
+                  <li>[＋ 새 시험]에 이름·날짜를 넣어 시험을 만듭니다 (이미 있으면 목록에서 고르세요).</li>
+                  <li>
+                    받은 mp3를 올립니다. 파일 이름 앞에 시각을 붙이면(예: <span className="mono">0840_1교시본령.mp3</span>) 시간표의 같은
+                    시각 줄에 자동으로 연결됩니다.
+                  </li>
+                  <li>시간표를 만듭니다 — 한 줄씩 넣거나 엑셀(교시·구분·타종시간)로 가져옵니다. 음원 없이 먼저 저장하고 나중에 연결해도 됩니다.</li>
+                  <li>[방송 진행]에서 이 시험으로 리허설해 미리 들어 봅니다.</li>
+                  <li>시험 날 이 화면을 열어 두면 시간표대로 자동 방송합니다. 방송 중에도 아직 나가지 않은 방송은 고칠 수 있습니다.</li>
+                </ol>
+              </section>
+            )
           ) : (
             <section className="card timetable-card">
               <div className="timetable-head">
-                <h2>오늘 시간표</h2>
+                <h2>{activeExam ? activeExam.name : '오늘 시간표'}</h2>
+                {examSection && !examToday && channelExams.length > 1 && (
+                  <select
+                    value={pickedExam?.id ?? ''}
+                    disabled={snap.armed}
+                    title={snap.armed ? '자동 방송 중에는 바꿀 수 없습니다' : '리허설·미리 보기에 쓸 시간표'}
+                    onChange={(e) => setPickedExamId(e.target.value)}
+                  >
+                    {channelExams.map((e) => (
+                        <option key={e.id} value={e.id}>
+                          시험 · {shortDate(e.date)} {e.name}
+                        </option>
+                      ))}
+                  </select>
+                )}
                 <span className="muted small">자동 방송이 안 나갔을 때(건너뜀·실패)는 해당 줄의 [지금 재생]을 누르면 즉시 송출됩니다. 이미 송출한 방송은 다시 누를 수 없습니다.</span>
               </div>
               <div className="table-scroll" ref={tableScrollRef}>
@@ -1336,6 +1609,8 @@ function summarize(s: {
   armedTodayLabel?: string;
   stoppedToday: boolean;
   next: string | null;
+  /** 방송할 시간표가 비어 있음 (방송을 하나도 넣지 않은 시험 등) */
+  empty?: boolean;
 }): { level: 'ok' | 'warn' | 'bad' | 'idle'; title: string; detail?: string } {
   if (s.armed && !s.audioOn) return { level: 'bad', title: '소리가 꺼져 있습니다 — 화면을 한 번 클릭하세요' };
   if (s.armed && s.alarms.length) return { level: 'bad', title: s.alarms[0] };
@@ -1349,6 +1624,8 @@ function summarize(s: {
     };
   }
   if (s.armedTodayLabel && s.stoppedToday) return { level: 'warn', title: '자동 방송이 중지된 상태입니다', detail: '아래 [자동 방송 다시 시작]을 누르세요' };
+  if (!s.armed && s.empty)
+    return { level: s.armedTodayLabel ? 'bad' : 'idle', title: '방송할 시간표가 비어 있습니다', detail: '[시험 · 음원 등록]에서 시간표에 방송을 넣고 저장하세요' };
   if (s.armedTodayLabel && !s.loaded) return { level: 'idle', title: '방송 준비 중… 잠시만 기다리세요' };
   return { level: 'idle', title: '방송 준비 상태를 점검하세요', detail: '방송일에는 이 화면을 열어 두기만 하면 자동으로 방송합니다' };
 }

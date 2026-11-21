@@ -8,6 +8,8 @@ import { formatDuration } from './NowPlaying';
 
 interface Props {
   neisCode: string;
+  /** 시험 방송 음원으로 저장 (그 시험의 음원 목록에 들어간다) */
+  examId?: string;
   assets: Asset[];
   /** 학교 음원 목록에서 고른 음원 id. 여러 개면 같은 타종 구성을 각각에 붙여 일괄 저장한다 */
   targets?: string[];
@@ -52,7 +54,7 @@ const block = (source: Source | null): Block => ({ key: ++seq, source, gapAfterS
  * 타종 + 멘트 이어 붙이기. 블록을 순서대로 놓고 간격만 정하면, 앞뒤 무음을 자르고 음량을 맞춰 한 파일로 만든다.
  * 결과는 학교 음원으로 저장되어 시간표에서 고를 수 있다.
  */
-export default function AudioComposer({ neisCode, assets, targets: targetIds = [], onSaved, onClose }: Props) {
+export default function AudioComposer({ neisCode, examId, assets, targets: targetIds = [], onSaved, onClose }: Props) {
   const bells = assets.filter((a) => a.id.startsWith('ref-bell-'));
   const school = assets.filter((a) => a.source !== 'builtin').sort(byLabel);
   const [targets] = useState(() => targetIds.filter((id) => assets.some((a) => a.id === id)));
@@ -200,7 +202,7 @@ export default function AudioComposer({ neisCode, assets, targets: targetIds = [
   }
 
   const upload = (buffer: AudioBuffer, label: string) =>
-    uploadSchoolAudio(neisCode, new File([encodeWav(buffer.getChannelData(0), MIX_SAMPLE_RATE)], `${label}.wav`, { type: 'audio/wav' }), label);
+    uploadSchoolAudio(neisCode, new File([encodeWav(buffer.getChannelData(0), MIX_SAMPLE_RATE)], `${label}.wav`, { type: 'audio/wav' }), label, { examId });
 
   async function save() {
     if (!result) return;
@@ -317,13 +319,15 @@ export default function AudioComposer({ neisCode, assets, targets: targetIds = [
               )}
               {b.source?.type === 'file' && <option value="__file">📁 {b.source.file.name}</option>}
               <option value="__pick">📁 내 PC 파일 고르기…</option>
-              <optgroup label="타종 (평가원 참고 타종)">
-                {bells.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.label}
-                  </option>
-                ))}
-              </optgroup>
+              {bells.length > 0 && (
+                <optgroup label="타종 (평가원 참고 타종)">
+                  {bells.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.label}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
               {school.length > 0 && (
                 <optgroup label="학교 음원">
                   {school.map((a) => (

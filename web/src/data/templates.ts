@@ -149,4 +149,6 @@ export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = {
     { date: '2026-11-19', mode: 'live', label: '2027학년도 수능' },
   ],
   liveLockWindow: { start: '07:00:00', end: '18:30:00' },
+  // 2027학년도 수능 종료(2026-11-19). 내년 수능 준비 때 관리자 화면 [운영 모드]에서 켠다
+  csatMode: false,
 };

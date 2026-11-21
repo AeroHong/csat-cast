@@ -46,6 +46,8 @@ export interface Asset {
   /** Firebase Storage 경로. 있으면 여기서 내려받는다 (로그인 필요) */
   storagePath?: string;
   source: AssetSource;
+  /** 시험 방송용 학교 음원이면 그 시험 (없으면 수능 시간표용). 수능·시험 음원 목록을 나눠 보여 준다 */
+  examId?: string;
 }
 
 /** 학교별 채널 설정 (채널 1개 = 플레이어 1개) */
@@ -97,4 +99,27 @@ export interface GlobalConfig {
   armedDates: ArmedDate[];
   /** 이 시간대에는 테스트 기능을 막는다 (실전 보호) */
   liveLockWindow: { start: string; end: string };
+  /**
+   * 수능 모드. 켜져 있을 때만 학교 PC가 평가원 시간표·음원을 쓰고 지정 방송일(armedDates)에 자동 방송한다.
+   * 수능이 끝나면 관리자가 끈다 → 평가원 음원을 받지 않고 시험 방송만 쓴다. 없으면 꺼짐.
+   */
+  csatMode?: boolean;
+}
+
+/**
+ * 외부 시험 방송 (학력평가·모의평가 등). 학교가 직접 만들고 정한 날짜에 실제 시각대로 자동 방송한다.
+ * 음원은 학교 음원(schools/{코드}/assets)을 수능 시간표와 함께 쓴다.
+ */
+export interface Exam {
+  id: string;
+  /** 예: 2027 3월 전국연합학력평가 */
+  name: string;
+  /** YYYY-MM-DD (KST) */
+  date: string;
+  /** 방송할 채널 (기본 main) */
+  channelId: string;
+  /** 음원을 아직 고르지 않은 줄(assetId '')도 저장할 수 있다 — 그 줄은 연결 전까지 송출되지 않는다 */
+  cues: Cue[];
+  updatedAt: number;
+  updatedBy?: string;
 }

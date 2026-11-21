@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import TimeInput from '../components/TimeInput';
 import { describeRehearsal, validateRehearsal, type ScheduledRehearsal } from '../core/rehearsals';
 import { kstDate } from '../core/scheduler';
 import type { ArmedDate } from '../core/types';
@@ -24,6 +25,7 @@ export default function RehearsalScheduler({
   now,
   official,
   runningDate,
+  exams = [],
 }: {
   list: ScheduledRehearsal[];
   onChange: (list: ScheduledRehearsal[]) => void;
@@ -31,6 +33,8 @@ export default function RehearsalScheduler({
   official: ArmedDate[];
   /** 지금 자동 진행 중인 리허설 날짜 (그 예약은 지우기 전에 먼저 중지해야 함) */
   runningDate: string | null;
+  /** 학교 시험 방송 (그날은 리허설 예약 불가) */
+  exams?: { date: string; name: string }[];
 }) {
   const today = kstDate(now);
   const [date, setDate] = useState(kstDate(now + 86_400_000));
@@ -46,7 +50,7 @@ export default function RehearsalScheduler({
       kind,
       ...(kind === 'custom' ? { startTime, speed } : {}),
     };
-    const errs = validateRehearsal(r, { now, today, official, existing: list });
+    const errs = validateRehearsal(r, { now, today, official, existing: list, exams });
     setErrors(errs);
     if (errs.length === 0) onChange([...list, r].sort((a, b) => a.date.localeCompare(b.date)));
   }
@@ -100,7 +104,7 @@ export default function RehearsalScheduler({
             <div className="row">
               <label>
                 시작 시각
-                <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+                <TimeInput value={startTime} seconds={false} onChange={setStartTime} />
               </label>
               <label>
                 배속

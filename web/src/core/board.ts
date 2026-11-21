@@ -189,16 +189,31 @@ export interface DevicePresence {
   name?: string;
   since: number;
   armed?: boolean;
+  /** 마지막으로 살아 있다고 알린 시각 (1분마다). 이전 버전 기록에는 없다 */
+  seen?: number;
+  /** 연 주소 (csat-cast.web.app / localhost:5173 …). 같은 PC라도 주소가 다르면 다른 기기로 잡힌다 */
+  host?: string;
 }
 
-/** 같은 채널 화면을 연 PC 목록 (먼저 연 순서). 학교 담당자가 여럿이면 2대 이상도 정상이다 */
-export function devicesOpen(devices: Record<string, DevicePresence> | undefined | null): DevicePresence[] {
-  return Object.values(devices ?? {}).sort((a, b) => a.since - b.since);
+/** 이보다 오래 소식이 없는 기록은 이미 닫힌 화면으로 본다 (연결이 갑자기 끊겨 지워지지 않은 기록) */
+export const PRESENCE_STALE_MS = 3 * 60_000;
+
+/** 아직 살아 있는 기록인가 (now를 모르면 모두 살아 있다고 본다) */
+export function presenceAlive(d: DevicePresence, now?: number): boolean {
+  if (now === undefined) return true;
+  return now - (d.seen ?? d.since) <= PRESENCE_STALE_MS;
+}
+
+/** 같은 채널 화면을 연 PC 목록 (먼저 연 순서). 학교 담당자가 여럿이면 2대 이상도 정상이다. now를 주면 닫힌 화면의 남은 기록은 뺀다 */
+export function devicesOpen(devices: Record<string, DevicePresence> | undefined | null, now?: number): DevicePresence[] {
+  return Object.values(devices ?? {})
+    .filter((d) => presenceAlive(d, now))
+    .sort((a, b) => a.since - b.since);
 }
 
 /** 같은 채널을 2대 이상의 PC가 **자동 방송 중**이면 그 목록 (실제 이중 송출 위험). 화면만 열어 둔 PC는 세지 않는다 */
-export function devicesConflict(devices: Record<string, DevicePresence> | undefined | null): DevicePresence[] {
-  const armed = devicesOpen(devices).filter((d) => d.armed);
+export function devicesConflict(devices: Record<string, DevicePresence> | undefined | null, now?: number): DevicePresence[] {
+  const armed = devicesOpen(devices, now).filter((d) => d.armed);
   return armed.length > 1 ? armed : [];
 }
 

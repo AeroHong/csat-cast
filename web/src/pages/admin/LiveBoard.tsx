@@ -140,6 +140,7 @@ export default function LiveBoard({ rows, now }: { rows: ChannelRow[]; now: numb
                       </span>
                       <span className="school-type muted">{r.typeNo ? `유형${r.typeNo}` : r.customSchedule ? '자체' : '미지정'}</span>
                       {r.s?.mode && r.s.mode !== 'idle' && <span className={`tag ${r.s.mode}`}>{r.s.mode === 'live' ? '실전' : '테스트'}</span>}
+                      {r.s?.exam && <span className="tag" title={`학교 시험 방송: ${r.s.exam.name}`}>시험 방송</span>}
                       <span className={`school-reason ${r.health}`}>{r.reasons[0]}</span>
                     </div>
                   </th>

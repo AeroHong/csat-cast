@@ -48,13 +48,15 @@ export function describeRehearsal(r: ScheduledRehearsal): string {
  */
 export function validateRehearsal(
   r: ScheduledRehearsal,
-  ctx: { now: number; today: string; official: ArmedDate[]; existing: ScheduledRehearsal[] },
+  ctx: { now: number; today: string; official: ArmedDate[]; existing: ScheduledRehearsal[]; exams?: { date: string; name: string }[] },
 ): string[] {
   const errors: string[] = [];
   if (!/^\d{4}-\d{2}-\d{2}$/.test(r.date)) return ['날짜를 고르세요'];
   if (r.date < ctx.today) errors.push('지난 날짜입니다');
   const official = ctx.official.find((d) => d.date === r.date);
   if (official) errors.push(`${r.date}은 ${official.mode === 'live' ? '실전 방송일' : '공식 리허설일'}(${official.label})이라 자동 방송이 이미 잡혀 있습니다`);
+  const exam = ctx.exams?.find((e) => e.date === r.date);
+  if (exam) errors.push(`${r.date}은 시험 방송일(${exam.name})이라 자동 방송이 이미 잡혀 있습니다`);
   if (ctx.existing.some((x) => x.date === r.date && x.id !== r.id)) errors.push('그날은 이미 예약된 리허설이 있습니다');
   if (r.kind === 'custom') {
     if (!r.startTime || !/^([01]\d|2[0-3]):[0-5]\d$/.test(r.startTime)) errors.push('시작 시각을 정하세요');

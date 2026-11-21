@@ -2,6 +2,7 @@ import HistoryIcon from '@mui/icons-material/HistoryOutlined';
 import AssessmentIcon from '@mui/icons-material/AssessmentOutlined';
 import HowToRegIcon from '@mui/icons-material/HowToRegOutlined';
 import SensorsIcon from '@mui/icons-material/SensorsOutlined';
+import TuneIcon from '@mui/icons-material/TuneOutlined';
 import { Chip } from '@mui/material';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import AppShell, { type NavItem } from '../components/AppShell';
@@ -12,12 +13,13 @@ import { kstDate, kstTime } from '../core/scheduler';
 import { useSession } from '../session';
 import AccessAdmin from './admin/AccessAdmin';
 import LiveBoard, { CellLegend } from './admin/LiveBoard';
+import OperationMode from './admin/OperationMode';
 import PlayLogs from './admin/PlayLogs';
 import RunReportsAdmin from './admin/RunReportsAdmin';
 import SpecialVenue, { countdown } from './admin/SpecialVenue';
 import { buildRows, useAdminData, type ChannelRow, type Health, type ModeFilter } from './admin/data';
 
-type Tab = 'live' | 'access' | 'reports' | 'logs';
+type Tab = 'live' | 'access' | 'reports' | 'logs' | 'mode';
 const ORDER: Record<Health, number> = { bad: 0, warn: 1, none: 2, ok: 3 };
 
 /** 교육지원청 관리자 화면: 송출 현황 / 사용 신청·학교 관리 / 송출 기록 */
@@ -87,6 +89,7 @@ export default function StatusBoard() {
     },
     { key: 'reports', label: '테스트·방송 결과', icon: <AssessmentIcon fontSize="small" /> },
     { key: 'logs', label: '송출 기록', icon: <HistoryIcon fontSize="small" /> },
+    { key: 'mode', label: '운영 모드', icon: <TuneIcon fontSize="small" /> },
   ];
 
   return (
@@ -187,6 +190,7 @@ export default function StatusBoard() {
       {tab === 'access' && <AccessAdmin schools={data.schools} rows={rows} templates={data.templates} />}
       {tab === 'reports' && <RunReportsAdmin schools={data.schools} />}
       {tab === 'logs' && <PlayLogs schools={data.schools} now={now} />}
+      {tab === 'mode' && <OperationMode />}
     </div>
     </AppShell>
   );

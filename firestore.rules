@@ -65,6 +65,18 @@ service cloud.firestore {
       match /assets/{assetId} {
         allow read, write: if isSchool(code) || isAdmin();
       }
+
+      // 외부 시험 방송 (학교가 만들고 정한 날 자동 방송): 자기 학교만
+      match /exams/{examId} {
+        allow read, delete: if isSchool(code) || isAdmin();
+        allow create, update: if (isSchool(code) || isAdmin())
+          && request.resource.data.id == examId
+          && request.resource.data.name is string
+          && request.resource.data.date is string
+          && request.resource.data.channelId is string
+          && request.resource.data.cues is list
+          && request.resource.data.keys().hasOnly(['id', 'name', 'date', 'channelId', 'cues', 'updatedAt', 'updatedBy']);
+      }
     }
 
     // 방송 결과 기록(테스트·리허설·실전 회차별): 학교 PC가 자기 학교 기록만 만들고 진행 중 갱신한다. 관리자는 읽기만. 삭제 불가

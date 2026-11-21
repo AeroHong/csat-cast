@@ -420,3 +420,33 @@ table.list tr.is-selected td { background: color-mix(in srgb, var(--primary) 10%
 .output-pick { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .output-pick select { max-width: 340px; }
 .output-pick p { margin: 6px 0 0; }
+
+/* 시험 방송 */
+.exam-list { list-style: none; padding: 0; margin: 8px 0 12px; display: grid; gap: 6px; }
+.exam-list.past { opacity: 0.75; }
+.exam-pick { width: 100%; text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; background: var(--panel); }
+.exam-item.selected .exam-pick { border-color: var(--primary); outline: 2px solid var(--primary); outline-offset: -2px; }
+.exam-item.is-today .exam-pick { background: var(--ok-bg); }
+.exam-name { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.exam-meta .row { align-items: flex-end; flex-wrap: wrap; }
+.exam-meta label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; }
+.edit-table tr.row-locked td { opacity: 0.55; background: var(--line); }
+
+/* 시험 · 음원 등록: 왼쪽은 시험 목록(좁게), 오른쪽은 편집 영역을 넓게 쓰고 전체를 한 번에 스크롤 */
+@media (min-width: 1200px) {
+  .player-body.exam-edit { grid-template-columns: clamp(260px, 17vw, 320px) minmax(0, 1fr); }
+  .player-body.exam-edit .col-main { display: block; }
+  .player-body.exam-edit .timetable-card { display: block; }
+  .player-body.exam-edit .timetable-card .table-scroll { min-height: 0; max-height: none; overflow: visible; }
+  .player-body.exam-edit .asset-scroll { max-height: 55vh; }
+  .player-body.exam-edit .col-main > .card:first-child { margin-top: 10px; }
+}
+.exam-meta { padding: 12px 16px; }
+.exam-meta .row { gap: 10px; }
+.warn-text { color: var(--warn); font-weight: 600; }
+
+/* 24시간제 시각 입력 */
+.time-input { display: inline-flex; flex-direction: column; gap: 1px; }
+.time-input input { width: 6.6em; }
+.time-input input.bad { border-color: var(--bad); }
+.time-hint { font-size: 0.72rem; white-space: nowrap; }

@@ -26,6 +26,8 @@ export interface SchoolAssetDoc {
   durationMs: number;
   contentType: string;
   uploadedAt: number;
+  /** 시험 방송에서 올린 음원이면 그 시험 id (없으면 수능 시간표용 음원) */
+  examId?: string;
 }
 
 /** 캐시 이름. 내용 해시를 붙여 같은 id로 다시 올려도 새 파일을 받게 한다 */
@@ -40,6 +42,7 @@ export function toSchoolAsset(neisCode: string, id: string, d: SchoolAssetDoc): 
     url: cacheUrl(neisCode, id, d.sha256),
     storagePath: neisCode === 'LOCAL' ? undefined : d.storagePath,
     source: 'upload',
+    ...(d.examId ? { examId: d.examId } : {}),
   };
 }
 
@@ -80,9 +83,15 @@ export async function inspectAudioFile(file: File) {
 }
 
 /** 음원 올리기. 같은 내용의 파일은 같은 id가 되어 중복 저장되지 않는다 */
-export async function uploadSchoolAudio(neisCode: string, file: File, label: string): Promise<{ asset: Asset; doc: SchoolAssetDoc }> {
+export async function uploadSchoolAudio(
+  neisCode: string,
+  file: File,
+  label: string,
+  opts: { examId?: string } = {},
+): Promise<{ asset: Asset; doc: SchoolAssetDoc }> {
   const f = await inspectAudioFile(file);
-  const id = `u-${f.sha256.slice(0, 12)}`;
+  // 시험 방송 음원은 수능 음원과 id를 나눈다 (같은 파일을 양쪽에 올려도 서로의 목록을 덮어쓰지 않게)
+  const id = `${opts.examId ? 'e' : 'u'}-${f.sha256.slice(0, 12)}`;
   const d: SchoolAssetDoc = {
     label: label.trim() || file.name.replace(/\.[^.]+$/, ''),
     fileName: file.name,
@@ -92,6 +101,7 @@ export async function uploadSchoolAudio(neisCode: string, file: File, label: str
     durationMs: f.durationMs,
     contentType: f.contentType,
     uploadedAt: Date.now(),
+    ...(opts.examId ? { examId: opts.examId } : {}),
   };
   const asset = toSchoolAsset(neisCode, id, d);
   if (neisCode === 'LOCAL') {
@@ -143,17 +153,26 @@ export async function saveChannel(profile: SchoolProfile, channelId: string, pat
 /**
  * 학교 시간표 검사. errors가 있으면 저장하지 않는다. warnings는 확인만 요청한다.
  */
-export function checkSchedule(cues: Cue[], assetIds: Set<string>): { errors: string[]; warnings: string[] } {
-  if (cues.length === 0) return { errors: ['방송을 하나 이상 넣으세요'], warnings: [] };
+export function checkSchedule(
+  cues: Cue[],
+  assetIds: Set<string>,
+  opts: { allowMissingAudio?: boolean; allowEmpty?: boolean } = {},
+): { errors: string[]; warnings: string[] } {
+  if (cues.length === 0) return opts.allowEmpty ? { errors: [], warnings: ['아직 방송이 없습니다'] } : { errors: ['방송을 하나 이상 넣으세요'], warnings: [] };
   // 담당자가 알아보기 쉽게 "시각 내용" 단위로 알린다. 그 밖의 형식 오류(종류·설정값 등)는 공통 검사로 잡는다
   const errors = validateTemplate({ id: 'school', name: '학교 시간표', cues }).filter((e) => !/시각 형식|음원 지정/.test(e));
   const warnings: string[] = [];
+  // 시험 방송은 시간표를 먼저 저장하고 음원은 나중에 올려 연결할 수 있다 (연결 전까지 그 줄은 송출되지 않음)
+  const missing = opts.allowMissingAudio ? cues.filter((c) => !c.assetId || !assetIds.has(c.assetId)).length : 0;
+  if (missing) warnings.push(`음원이 없는 방송 ${missing}곳 — 음원을 연결하기 전까지는 송출되지 않습니다`);
   const sorted = [...cues].sort((a, b) => a.time.localeCompare(b.time));
   sorted.forEach((c, i) => {
     const name = `${c.time.slice(0, 8)} ${c.label || '(내용 없음)'}`;
     if (!TIME_RE.test(c.time)) errors.push(`${name}: 시각 형식 오류`);
     if (!c.label.trim()) errors.push(`${name}: 내용을 적으세요`);
-    if (!c.assetId) errors.push(`${name}: 음원을 고르세요`);
+    if (opts.allowMissingAudio) {
+      /* 위에서 한 줄로 경고 */
+    } else if (!c.assetId) errors.push(`${name}: 음원을 고르세요`);
     else if (!assetIds.has(c.assetId)) errors.push(`${name}: 고른 음원이 없습니다 (삭제됨)`);
     if (i > 0 && sorted[i - 1].time === c.time) warnings.push(`${c.time}에 방송이 둘 이상 겹칩니다`);
   });

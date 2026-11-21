@@ -18,6 +18,7 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  ListSubheader,
   Menu,
   MenuItem,
   Toolbar,
@@ -36,6 +37,8 @@ export interface NavItem<K extends string = string> {
   /** 메뉴 오른쪽 작은 표시 (건수·상태) */
   badge?: { label: string | number; color?: 'default' | 'error' | 'warning' | 'success' | 'primary' };
   disabled?: boolean;
+  /** 메뉴 묶음 이름 (같은 묶음끼리 이어서 놓는다) */
+  group?: string;
 }
 
 const OPEN_W = '15rem';
@@ -138,7 +141,22 @@ export default function AppShell<K extends string>({
           )}
         </Box>
         <List dense sx={{ px: 1, flex: 1 }}>
-          {nav.map((n) => {
+          {nav.map((n, i) => {
+            // 묶음이 바뀌는 곳에 묶음 이름 (접힌 메뉴에서는 구분선)
+            const head =
+              n.group && n.group !== nav[i - 1]?.group ? (
+                collapsed ? (
+                  i > 0 && <Divider key={`g-${n.group}`} sx={{ my: 1 }} />
+                ) : (
+                  <ListSubheader
+                    key={`g-${n.group}`}
+                    disableSticky
+                    sx={{ bgcolor: 'transparent', lineHeight: 2.2, mt: i > 0 ? 1.5 : 0, px: 1.5, fontWeight: 800, fontSize: '0.75rem' }}
+                  >
+                    {n.group}
+                  </ListSubheader>
+                )
+              ) : null;
             const item = (
               <ListItemButton
                 key={n.key}
@@ -158,13 +176,16 @@ export default function AppShell<K extends string>({
                 )}
               </ListItemButton>
             );
-            return collapsed ? (
-              <Tooltip key={n.key} title={n.badge ? `${n.label} (${n.badge.label})` : n.label} placement="right">
-                <span>{item}</span>
-              </Tooltip>
-            ) : (
-              item
-            );
+            return [
+              head,
+              collapsed ? (
+                <Tooltip key={n.key} title={n.badge ? `${n.label} (${n.badge.label})` : n.label} placement="right">
+                  <span>{item}</span>
+                </Tooltip>
+              ) : (
+                item
+              ),
+            ];
           })}
         </List>
         <Divider />

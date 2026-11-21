@@ -2,7 +2,7 @@ import { audioEngine, type AudioEngine, type PlayEnd, type PlayHandle } from './
 import { serverClock, type ServerClock } from './clock';
 import type { Reporter } from './reporter';
 import { restoreStates } from './runStore';
-import { applyExamDelays, decide, nextPending, type CueState, type ManualDelay, type PlannedCue } from './scheduler';
+import { applyExamDelays, decide, initialStates, nextPending, type CueState, type ManualDelay, type PlannedCue } from './scheduler';
 import { startTicker } from './ticker';
 import type { RunMode } from './types';
 
@@ -204,6 +204,66 @@ export class PlayerController {
     this.tick();
     // 첫 방송이 한참 뒤여도 시작했다는 사실을 화면·저장소에 바로 알린다
     this.emit();
+  }
+
+  /**
+   * 방송 중 시간표 교체 (외부 시험 방송: 아직 나가지 않은 방송만 고칠 수 있다).
+   * - 대기(pending)가 아닌 방송(송출 완료·송출 중·예약됨·건너뜀·실패)은 예전 내용 그대로 둔다
+   * - 대기 중인 방송은 새 시각·음원으로 바꾸고, 새로 생긴 방송은 처음 시작할 때와 같은 규칙(이미 늦었으면 건너뜀)
+   * - 없어진 대기 방송은 뺀다
+   * @returns 바뀐 내용 요약 (바뀐 것이 없으면 null)
+   */
+  replan(plan: PlannedCue[]): { changed: number; added: number; removed: number; ignored: number } | null {
+    if (!this.armed) return null;
+    const now = this.clock.now();
+    const oldById = new Map(this.basePlan.map((p) => [p.cue.id, p]));
+    const newById = new Map(plan.map((p) => [p.cue.id, p]));
+    const isPending = (id: string) => (this.states[id] ?? 'pending') === 'pending';
+    const same = (a: PlannedCue, b: PlannedCue) => a.at === b.at && JSON.stringify(a.cue) === JSON.stringify(b.cue);
+    let changed = 0;
+    let added = 0;
+    let removed = 0;
+    let ignored = 0;
+    const next: PlannedCue[] = [];
+    for (const old of this.basePlan) {
+      const id = old.cue.id;
+      const neu = newById.get(id);
+      if (!isPending(id)) {
+        // 이미 나갔거나 나가는 중인 방송은 그대로 (지워도 기록으로 남긴다)
+        if (!neu || !same(old, neu)) ignored++;
+        next.push(old);
+      } else if (!neu) {
+        removed++;
+        delete this.states[id];
+      } else {
+        if (!same(old, neu)) changed++;
+        next.push(neu);
+      }
+    }
+    for (const p of plan) {
+      if (oldById.has(p.cue.id)) continue;
+      added++;
+      next.push(p);
+    }
+    if (!changed && !added && !removed) return ignored ? { changed, added, removed, ignored } : null;
+    next.sort((a, b) => a.at - b.at);
+    this.basePlan = next;
+    this.applyDelays();
+    // 새로 생긴 방송·시각이 바뀐 대기 방송: 이미 허용 시간을 넘었으면 건너뜀
+    const fresh = initialStates(this.plan, now);
+    const late: string[] = [];
+    for (const { cue } of this.plan) {
+      if (!isPending(cue.id)) continue;
+      this.states[cue.id] = fresh[cue.id];
+      if (fresh[cue.id] === 'skipped') late.push(cue.label);
+    }
+    const parts = [changed && `변경 ${changed}`, added && `추가 ${added}`, removed && `삭제 ${removed}`].filter(Boolean);
+    this.push('warn', `시간표 변경 반영: ${parts.join(' · ')}${ignored ? ` (이미 나간 방송 ${ignored}개는 그대로)` : ''}`);
+    if (late.length) this.push('warn', `바꾼 시각이 이미 지나 건너뜁니다: ${late.join(', ')}`);
+    this.prepareUpcoming(now);
+    this.tick();
+    this.emit();
+    return { changed, added, removed, ignored };
   }
 
   /** @param byUser 담당자가 직접 중지한 경우 true (같은 날 자동 재시작 안 함) */

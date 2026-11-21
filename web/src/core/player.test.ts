@@ -744,3 +744,74 @@ describe('대기 중 출력 쉬기', () => {
     expect(audio.played.map((p) => p.assetId)).toEqual(['bell']);
   });
 });
+
+describe('replan: 방송 중 시간표 교체 (외부 시험)', () => {
+  const at = (id: string) => player.snapshot().plan.find((p) => p.cue.id === id)?.at;
+
+  it('대기 중인 방송의 시각을 바꾸면 바뀐 시각에 재생한다', () => {
+    player.arm(plan, 'live');
+    const r = player.replan([plan[0], { ...plan[1], at: 90_000 }]);
+    expect(r).toMatchObject({ changed: 1, added: 0, removed: 0 });
+    expect(at('ment')).toBe(90_000);
+    clock.t = 60_000;
+    tick();
+    expect(audio.played.map((p) => p.assetId)).not.toContain('ment');
+    clock.t = 89_000;
+    tick();
+    expect(audio.played.map((p) => p.assetId)).toContain('ment');
+  });
+
+  it('이미 송출한 방송은 고쳐도 그대로 둔다 (다시 나가지 않음)', async () => {
+    player.arm(plan, 'live');
+    clock.t = 10_000;
+    tick();
+    audio.endAll();
+    await flush();
+    expect(player.snapshot().states.bell).toBe('done');
+    const r = player.replan([{ ...plan[0], at: 30_000 }, plan[1]]);
+    expect(r).toMatchObject({ changed: 0, ignored: 1 });
+    expect(at('bell')).toBe(10_000);
+    clock.t = 30_000;
+    tick();
+    expect(audio.played.filter((p) => p.assetId === 'bell')).toHaveLength(1);
+  });
+
+  it('송출 중(예약됨)인 방송은 지워도 남긴다', () => {
+    player.arm(plan, 'live');
+    clock.t = 9_000;
+    tick();
+    expect(player.snapshot().states.bell).toBe('scheduled');
+    player.replan([plan[1]]);
+    expect(at('bell')).toBe(10_000);
+    expect(player.snapshot().states.bell).toBe('scheduled');
+  });
+
+  it('추가·삭제를 반영하고, 이미 지난 시각으로 바꾸면 건너뛴다', () => {
+    player.arm(plan, 'live');
+    clock.t = 20_000;
+    tick();
+    const extra: PlannedCue = { cue: cue('extra', 'ment'), at: 40_000 };
+    const r = player.replan([plan[0], extra, { ...plan[1], at: -60_000 }]);
+    expect(r).toMatchObject({ added: 1, changed: 1 });
+    expect(player.snapshot().states.extra).toBe('pending');
+    expect(player.snapshot().states.ment).toBe('skipped');
+    const r2 = player.replan([plan[0], { ...plan[1], at: -60_000 }]);
+    expect(r2).toMatchObject({ removed: 1 });
+    expect(at('extra')).toBeUndefined();
+    expect(player.snapshot().states.extra).toBeUndefined();
+  });
+
+  it('대기 중인 방송의 음원을 바꾸면 새 음원으로 재생한다', () => {
+    player.arm(plan, 'live');
+    player.replan([plan[0], { cue: { ...plan[1].cue, assetId: 'ment2' }, at: 60_000 }]);
+    clock.t = 59_000;
+    tick();
+    expect(audio.played.map((p) => p.assetId)).toContain('ment2');
+  });
+
+  it('바뀐 것이 없으면 null, 방송 중이 아니면 null', () => {
+    expect(player.replan(plan)).toBeNull();
+    player.arm(plan, 'live');
+    expect(player.replan(plan)).toBeNull();
+  });
+});

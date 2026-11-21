@@ -161,3 +161,20 @@ describe('formatDrift', () => {
     expect(formatDrift(undefined)).toBe('');
   });
 });
+
+describe('다른 화면 감지: 닫힌 화면의 남은 기록', () => {
+  const base = { uid: 'u', since: 0 };
+  it('1분마다 알리는 기록이 3분 넘게 끊기면 열린 화면으로 세지 않는다', async () => {
+    const { devicesOpen, devicesConflict, PRESENCE_STALE_MS } = await import('./board');
+    const now = 10 * 60_000;
+    const devices = {
+      alive: { ...base, seen: now - 30_000, armed: true },
+      stale: { ...base, seen: now - PRESENCE_STALE_MS - 1, armed: true },
+      oldVersion: { ...base, since: now - 60_000 },
+    };
+    expect(devicesOpen(devices, now)).toHaveLength(2);
+    expect(devicesConflict(devices, now)).toEqual([]);
+    // now를 모르면 예전처럼 모두 센다
+    expect(devicesOpen(devices)).toHaveLength(3);
+  });
+});
